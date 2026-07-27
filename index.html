@@ -2156,7 +2156,12 @@
 
         function saveCart() {
             localStorage.setItem('bridge_cart', JSON.stringify(cart));
-            window.persistBridgeState?.('bridge_cart', cart);
+            const databaseCart = cart.map(item => ({
+                ...item,
+                userId: currentUser?.username || item.userId || 'guest',
+                productId: item.productId ?? item.id
+            }));
+            window.persistBridgeState?.('bridge_cart', databaseCart);
             updateCartUI();
         }
 

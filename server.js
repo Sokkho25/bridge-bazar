@@ -74,6 +74,12 @@ async function mirrorStateToCollection(key, value) {
   if (key === 'bridge_orders') {
     documents.forEach((order) => { order.orderId = order.orderId ?? order.id; });
   }
+  if (key === 'bridge_cart') {
+    documents.forEach((item) => {
+      item.userId = item.userId ?? 'active-cart';
+      item.productId = item.productId ?? item.id;
+    });
+  }
   await Model.insertMany(documents);
 }
 
