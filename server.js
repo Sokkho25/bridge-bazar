@@ -65,9 +65,15 @@ async function mirrorStateToCollection(key, value) {
   if (!Model) return;
   await Model.deleteMany({});
   if (!Array.isArray(value) || value.length === 0) return;
-  await Model.insertMany(value.map((item) => (
-    item && typeof item === 'object' && !Array.isArray(item) ? item : { value: item }
-  )));
+  const documents = value.map((item) => (
+    item && typeof item === 'object' && !Array.isArray(item) ? { ...item } : { value: item }
+  ));
+  // An earlier version of the project created a unique `orderId` index. The
+  // frontend uses `id`, so preserve both names to keep that existing index valid.
+  if (key === 'bridge_orders') {
+    documents.forEach((order) => { order.orderId = order.orderId ?? order.id; });
+  }
+  await Model.insertMany(documents);
 }
 
 async function ensureAdminAccount() {

@@ -4082,7 +4082,7 @@
                 'seller_ratings', 'bridge_payouts', 'bridge_banned_users',
                 'bridge_complaints', 'bridge_inquiries', 'bridge_cart'
             ]);
-            const syncedFlag = 'bridge_mongodb_loaded';
+            const syncedFlag = 'bridge_mongodb_snapshot';
             const nativeSetItem = Storage.prototype.setItem;
             const nativeRemoveItem = Storage.prototype.removeItem;
 
@@ -4097,8 +4097,9 @@
                     const response = await request('/api/state');
                     const databaseState = await response.json();
                     const hasDatabaseData = Object.keys(databaseState).length > 0;
+                    const databaseSnapshot = JSON.stringify(databaseState);
 
-                    if (hasDatabaseData && sessionStorage.getItem(syncedFlag) !== 'yes') {
+                    if (hasDatabaseData && localStorage.getItem(syncedFlag) !== databaseSnapshot) {
                         Object.entries(databaseState).forEach(([key, value]) => {
                             nativeSetItem.call(localStorage, key, JSON.stringify(value));
                         });
@@ -4113,7 +4114,7 @@
                                 });
                             }
                         }));
-                        sessionStorage.setItem(syncedFlag, 'yes');
+                        nativeSetItem.call(localStorage, syncedFlag, databaseSnapshot);
                         window.location.reload();
                         return;
                     }
