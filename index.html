@@ -2928,14 +2928,12 @@
         }
 
         function downloadReceipt(order) {
-            const content =
-                `Bridge Bazar Receipt\n-------------------\nOrder #${order.id}\nBuyer: ${order.buyerName}\nItems:\n${order.items.map(i=>`  ${i.name} x ${i.quantity} = ৳${(i.price*i.quantity).toFixed(2)}`).join('\n')}\nTotal: ৳${order.total.toFixed(2)}\nDelivery: ${order.deliveryMethod || 'Standard'}\nPayment: ${order.paymentMethod || 'Cash'}\nTransaction ID: ${order.transactionId || 'N/A'}\nDate: ${new Date(order.orderDate).toLocaleString()}\nStatus: ${order.status}\nThank you!`;
-            const blob = new Blob([content], { type: 'text/plain' });
             const a = document.createElement('a');
-            a.href = URL.createObjectURL(blob);
-            a.download = `receipt_${order.id}.txt`;
+            a.href = `/api/receipts/${encodeURIComponent(order.id)}.pdf`;
+            a.download = `bridge-bazar-receipt-${order.id}.pdf`;
+            document.body.appendChild(a);
             a.click();
-            URL.revokeObjectURL(a.href);
+            a.remove();
         }
 
         // ===== PROFILE =====
@@ -3476,14 +3474,6 @@
                 alert(t('password_too_short'));
                 return;
             }
-            if (users.find(u => u.nid === nid)) {
-                alert(t('nid_already_used'));
-                return;
-            }
-            if (users.find(u => u.username === username)) {
-                alert(t('username_taken'));
-                return;
-            }
             if (isUserBanned(username)) {
                 alert(t('banned_username'));
                 return;
@@ -3566,27 +3556,27 @@
                 alert('Unable to verify the OTP. Please check the server connection and try again.');
                 return;
             }
-            const { fullName, username, address, nid, password, role } = tempSignupData;
-            const newSellerId = users.filter(u => u.role === 'seller').length + 1;
-            const newUser = {
-                fullName,
-                username,
-                mobile: mobile || '',
-                email: email || '',
-                address,
-                nid,
-                password,
-                role,
-                sellerId: role === 'seller' ? newSellerId : null,
-                phoneVerified: true,
-                registeredAt: new Date().toISOString(),
-                bkash: '',
-                nagad: '',
-                rocket: '',
-                bankAccount: ''
-            };
-            users.push(newUser);
-            saveUsers();
+            let savedUser;
+            try {
+                const response = await fetch('/api/auth/register', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ ...tempSignupData, mobile, email })
+                });
+                const data = await response.json();
+                if (!response.ok) {
+                    alert(data.error || 'Unable to create the account. Please try again.');
+                    return;
+                }
+                // Keep the same local structure for this already-open page. The
+                // server remains the source of truth for every device.
+                savedUser = { ...data.user, password: tempSignupData.password };
+                users = users.filter(u => u.username !== savedUser.username);
+                users.push(savedUser);
+            } catch (error) {
+                alert('Unable to create the account. Please check the server connection and try again.');
+                return;
+            }
             document.getElementById('signupMessage').innerHTML = t('account_created');
             tempSignupData = null;
             generatedOtp = null;
@@ -3605,20 +3595,32 @@
         });
 
         // ===== LOGIN =====
-        document.getElementById('loginForm').addEventListener('submit', (e) => {
+        document.getElementById('loginForm').addEventListener('submit', async (e) => {
             e.preventDefault();
             const unOrEmail = document.getElementById('loginUsername').value.trim();
             const password = document.getElementById('loginPassword').value.trim();
-            if (isUserBanned(unOrEmail)) { document.getElementById('loginMessage').innerHTML = t('you_are_banned');
-                return; }
-            const user = users.find(u => u.username === unOrEmail || u.email === unOrEmail);
-            if (user && user.password === password) {
+            try {
+                const response = await fetch('/api/auth/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ usernameOrEmail: unOrEmail, password })
+                });
+                const data = await response.json();
+                if (!response.ok) {
+                    document.getElementById('loginMessage').innerHTML = t('invalid_credentials');
+                    return;
+                }
+                const user = { ...data.user, password };
+                users = users.filter(u => u.username !== user.username);
+                users.push(user);
                 const remember = document.getElementById('rememberMeCheckbox').checked;
-                if (remember) { localStorage.setItem('bridge_remember', JSON.stringify({ username: user.username,
-                        password: user.password })); } else { localStorage.removeItem('bridge_remember'); }
+                if (remember) { localStorage.setItem('bridge_remember', JSON.stringify({ username: user.username, password }));
+                } else { localStorage.removeItem('bridge_remember'); }
                 closeModals();
                 loginUser(user);
-            } else { document.getElementById('loginMessage').innerHTML = t('invalid_credentials'); }
+            } catch (error) {
+                document.getElementById('loginMessage').innerHTML = 'Unable to sign in. Please check the server connection and try again.';
+            }
         });
 
         document.getElementById('togglePasswordBtn')?.addEventListener('click', () => {

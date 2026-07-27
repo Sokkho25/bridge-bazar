@@ -4,6 +4,7 @@ const path = require('path');
 const crypto = require('crypto');
 const express = require('express');
 const mongoose = require('mongoose');
+const PDFDocument = require('pdfkit');
 
 const app = express();
 const port = Number(process.env.PORT || 3000);
@@ -83,6 +84,15 @@ async function mirrorStateToCollection(key, value) {
   await Model.insertMany(documents);
 }
 
+async function saveState(key, value) {
+  await AppState.findOneAndUpdate(
+    { key },
+    { value, updatedAt: new Date() },
+    { upsert: true, new: true, setDefaultsOnInsert: true }
+  );
+  await mirrorStateToCollection(key, value);
+}
+
 async function ensureAdminAccount() {
   const admin = {
     fullName: 'Website Owner', username: 'hightable', password: 'hightable2026',
@@ -146,6 +156,127 @@ app.post('/api/auth/otp/verify', async (req, res, next) => {
   } catch (error) { next(error); }
 });
 
+app.post('/api/auth/register', async (req, res, next) => {
+  try {
+    const candidate = req.body || {};
+    const required = ['fullName', 'username', 'address', 'nid', 'password', 'role'];
+    if (required.some((field) => !String(candidate[field] || '').trim())) {
+      return res.status(400).json({ error: 'Please complete all required fields.' });
+    }
+    if (!['buyer', 'seller'].includes(candidate.role)) {
+      return res.status(400).json({ error: 'Unsupported account role.' });
+    }
+    const contact = String(candidate.mobile || candidate.email || '').trim();
+    const verifiedOtp = await Otp.findOne({
+      contact,
+      username: String(candidate.username).trim(),
+      verifiedAt: { $ne: null }
+    }).sort({ createdAt: -1 }).lean();
+    if (!contact || !verifiedOtp) {
+      return res.status(400).json({ error: 'Please verify your mobile number or email with OTP first.' });
+    }
+    const state = await AppState.findOne({ key: 'bridge_users' }).lean();
+    const users = Array.isArray(state?.value) ? state.value : [];
+    if (users.some((user) => user.username === candidate.username || user.nid === candidate.nid)) {
+      return res.status(409).json({ error: 'This username or NID is already registered.' });
+    }
+    const nextSellerId = users.reduce((max, user) => Math.max(max, Number(user.sellerId) || 0), 0) + 1;
+    const user = {
+      fullName: String(candidate.fullName).trim(),
+      username: String(candidate.username).trim(),
+      mobile: String(candidate.mobile || '').trim(),
+      email: String(candidate.email || '').trim(),
+      address: String(candidate.address).trim(),
+      nid: String(candidate.nid).trim(),
+      password: String(candidate.password),
+      role: candidate.role,
+      sellerId: candidate.role === 'seller' ? nextSellerId : null,
+      phoneVerified: true,
+      registeredAt: new Date().toISOString(),
+      bkash: '', nagad: '', rocket: '', bankAccount: ''
+    };
+    users.push(user);
+    await saveState('bridge_users', users);
+    const { password, ...safeUser } = user;
+    res.status(201).json({ user: safeUser });
+  } catch (error) { next(error); }
+});
+
+app.post('/api/auth/login', async (req, res, next) => {
+  try {
+    const usernameOrEmail = String(req.body.usernameOrEmail || '').trim();
+    const password = String(req.body.password || '');
+    const state = await AppState.findOne({ key: 'bridge_users' }).lean();
+    const users = Array.isArray(state?.value) ? state.value : [];
+    const user = users.find((entry) => entry.username === usernameOrEmail || entry.email === usernameOrEmail);
+    if (!user || user.password !== password || user.isBanned) {
+      return res.status(401).json({ error: 'Invalid credentials.' });
+    }
+    const { password: _password, ...safeUser } = user;
+    res.json({ user: safeUser });
+  } catch (error) { next(error); }
+});
+
+app.get('/api/receipts/:orderId.pdf', async (req, res, next) => {
+  try {
+    const state = await AppState.findOne({ key: 'bridge_orders' }).lean();
+    const orders = Array.isArray(state?.value) ? state.value : [];
+    const order = orders.find((entry) => String(entry.id) === String(req.params.orderId));
+    if (!order) return res.status(404).json({ error: 'Order not found.' });
+
+    const pdf = new PDFDocument({ size: 'A4', margin: 48 });
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="bridge-bazar-receipt-${order.id}.pdf"`);
+    pdf.pipe(res);
+
+    const money = (amount) => `BDT ${Number(amount || 0).toFixed(2)}`;
+    pdf.rect(0, 0, 595, 112).fill('#0b5e2e');
+    pdf.fillColor('#ffe484').font('Helvetica-Bold').fontSize(26).text('BRIDGE BAZAR', 48, 35);
+    pdf.fillColor('#ffffff').font('Helvetica').fontSize(10).text('Marketplace purchase receipt', 48, 70);
+    pdf.fillColor('#ffffff').font('Helvetica-Bold').fontSize(11).text(`ORDER #${order.id}`, 390, 50, { width: 155, align: 'right' });
+
+    pdf.moveDown(4).fillColor('#1b4d2a').font('Helvetica-Bold').fontSize(15).text('Payment Summary');
+    pdf.moveDown(0.5).font('Helvetica').fontSize(10).fillColor('#333333');
+    pdf.text(`Buyer: ${order.buyerName || 'Customer'}`);
+    pdf.text(`Seller: ${order.sellerName || 'Seller'}`);
+    pdf.text(`Order date: ${new Date(order.orderDate || Date.now()).toLocaleString()}`);
+    pdf.text(`Delivery: ${order.deliveryMethod || 'Standard delivery'}`);
+    pdf.text(`Payment method: ${order.paymentMethod || 'Cash on delivery'}`);
+    pdf.text(`Transaction ID: ${order.transactionId || 'Not applicable'}`);
+
+    const top = pdf.y + 22;
+    pdf.rect(48, top, 499, 24).fill('#e8f5e9');
+    pdf.fillColor('#1b4d2a').font('Helvetica-Bold').fontSize(10);
+    pdf.text('ITEM', 58, top + 7, { width: 265 });
+    pdf.text('QTY', 335, top + 7, { width: 50, align: 'center' });
+    pdf.text('AMOUNT', 415, top + 7, { width: 120, align: 'right' });
+
+    let y = top + 34;
+    pdf.font('Helvetica').fillColor('#333333');
+    (order.items || []).forEach((item) => {
+      if (y > 690) { pdf.addPage(); y = 60; }
+      pdf.text(String(item.name || 'Product'), 58, y, { width: 265 });
+      pdf.text(String(item.quantity || 0), 335, y, { width: 50, align: 'center' });
+      pdf.text(money((item.price || 0) * (item.quantity || 0)), 415, y, { width: 120, align: 'right' });
+      y += 23;
+    });
+
+    y += 10;
+    pdf.moveTo(330, y).lineTo(547, y).strokeColor('#cfe1c3').stroke();
+    y += 12;
+    pdf.fillColor('#333333').font('Helvetica').text('Subtotal', 350, y, { width: 90 });
+    pdf.text(money(order.subtotal ?? order.total), 440, y, { width: 95, align: 'right' });
+    y += 20;
+    pdf.text('Courier charge', 350, y, { width: 90 });
+    pdf.text(money(order.courierCharge), 440, y, { width: 95, align: 'right' });
+    y += 24;
+    pdf.fillColor('#0b5e2e').font('Helvetica-Bold').fontSize(13).text('TOTAL', 350, y, { width: 90 });
+    pdf.text(money(order.total), 420, y, { width: 115, align: 'right' });
+    pdf.fillColor('#5a7a5a').font('Helvetica').fontSize(9).text('Thank you for shopping with Bridge Bazar.', 48, 755, { width: 499, align: 'center' });
+    pdf.end();
+  } catch (error) { next(error); }
+});
+
 // The existing page writes to these endpoints through the small adapter at the
 // bottom of index.html. Keeping this API generic lets the unchanged interface
 // persist every marketplace feature in MongoDB.
@@ -163,12 +294,7 @@ app.put('/api/state/:key', async (req, res, next) => {
     if (!Object.prototype.hasOwnProperty.call(req.body, 'value')) {
       return res.status(400).json({ error: 'A value is required.' });
     }
-    await AppState.findOneAndUpdate(
-      { key },
-      { value: req.body.value, updatedAt: new Date() },
-      { upsert: true, new: true, setDefaultsOnInsert: true }
-    );
-    await mirrorStateToCollection(key, req.body.value);
+    await saveState(key, req.body.value);
     res.status(204).end();
   } catch (error) { next(error); }
 });
