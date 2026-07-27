@@ -17,7 +17,7 @@ if (!mongoUri) {
 const stateKeys = new Set([
   'bridge_products', 'bridge_users', 'bridge_orders', 'bridge_reviews',
   'seller_ratings', 'bridge_payouts', 'bridge_banned_users',
-  'bridge_complaints', 'bridge_inquiries'
+  'bridge_complaints', 'bridge_inquiries', 'bridge_cart'
 ]);
 
 const stateSchema = new mongoose.Schema({
@@ -52,8 +52,9 @@ const collectionModels = {
   bridge_products: mongoose.model('Product', documentSchema),
   bridge_orders: mongoose.model('Order', documentSchema),
   bridge_reviews: mongoose.model('Review', documentSchema),
-  seller_ratings: mongoose.model('SellerRating', documentSchema),
+  seller_ratings: mongoose.model('SellerRating', documentSchema, 'ratings'),
   bridge_payouts: mongoose.model('Payout', documentSchema),
+  bridge_cart: mongoose.model('Cart', documentSchema, 'carts'),
   bridge_banned_users: mongoose.model('BannedUser', documentSchema),
   bridge_complaints: mongoose.model('Complaint', documentSchema),
   bridge_inquiries: mongoose.model('Inquiry', documentSchema)
@@ -67,6 +68,23 @@ async function mirrorStateToCollection(key, value) {
   await Model.insertMany(value.map((item) => (
     item && typeof item === 'object' && !Array.isArray(item) ? item : { value: item }
   )));
+}
+
+async function ensureAdminAccount() {
+  const admin = {
+    fullName: 'Website Owner', username: 'hightable', password: 'hightable2026',
+    role: 'admin', sellerId: null, phoneVerified: true, isBanned: false
+  };
+  const state = await AppState.findOne({ key: 'bridge_users' });
+  const users = Array.isArray(state?.value) ? state.value : [];
+  if (users.some((user) => user.username === admin.username)) return;
+  users.push(admin);
+  await AppState.findOneAndUpdate(
+    { key: 'bridge_users' },
+    { value: users, updatedAt: new Date() },
+    { upsert: true, new: true }
+  );
+  await mirrorStateToCollection('bridge_users', users);
 }
 
 app.use(express.json({ limit: '12mb' }));
@@ -167,7 +185,8 @@ mongoose.connect(mongoUri)
       console.log(`Bridge Bazar is running at http://localhost:${port}`);
       // Older saved data is migrated after the site is available. A migration
       // problem must never prevent customers from using the application.
-      AppState.find({}).lean()
+      ensureAdminAccount()
+        .then(() => AppState.find({}).lean())
         .then((savedState) => Promise.all(savedState.map(({ key, value }) => mirrorStateToCollection(key, value))))
         .catch((error) => console.error('Existing-data migration failed:', error.message));
     });

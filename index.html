@@ -2479,6 +2479,23 @@
             modal.style.display = 'flex';
         };
 
+        function getCourierCharge(method) {
+            return { bridge_courier: 30, pathao: 60, standard: 50, pickup: 0 }[method] ?? 0;
+        }
+
+        function refreshCheckoutSummary() {
+            const summary = document.getElementById('checkoutSummary');
+            if (!summary) return;
+            const subtotal = cart.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+            const deliveryMethod = document.getElementById('checkoutDeliveryMethod')?.value || 'bridge_courier';
+            const courierCharge = getCourierCharge(deliveryMethod);
+            summary.innerHTML = cart.map(item =>
+                `<div class="item-row"><span>${item.name} x ${item.quantity}</span><span>&#2547;${(item.price * item.quantity).toFixed(2)}</span></div>`
+            ).join('') +
+                `<div class="item-row"><span>Courier charge</span><span>&#2547;${courierCharge.toFixed(2)}</span></div>` +
+                `<div class="checkout-total"><span>${t('total')}</span><span>&#2547;${(subtotal + courierCharge).toFixed(2)}</span></div>`;
+        }
+
         window.changeDetailImage = function(index) {
             const p = products.find(pr => pr.id === currentDetailProductId);
             if (!p) return;
@@ -2699,6 +2716,7 @@
                 trxGroup.style.display = 'block';
                 document.getElementById('checkoutTransactionId').required = true;
             }
+            refreshCheckoutSummary();
             modal.style.display = 'flex';
         };
 
@@ -2721,6 +2739,8 @@
             }
         });
 
+        document.getElementById('checkoutDeliveryMethod')?.addEventListener('change', refreshCheckoutSummary);
+
         document.getElementById('checkoutForm')?.addEventListener('submit', function(e) {
             e.preventDefault();
             const address = document.getElementById('checkoutAddress').value.trim();
@@ -2738,7 +2758,9 @@
                 return;
             }
 
-            const total = cart.reduce((s, i) => s + (i.price * i.quantity), 0);
+            const subtotal = cart.reduce((s, i) => s + (i.price * i.quantity), 0);
+            const courierCharge = getCourierCharge(deliveryMethod);
+            const total = subtotal + courierCharge;
             const orderId = Date.now() + Math.random() * 1000;
 
             const orderItems = cart.map(item => ({
@@ -2765,6 +2787,8 @@
                 sellerId: orderItems[0].sellerId,
                 sellerName: orderItems[0].sellerName,
                 items: orderItems,
+                subtotal: subtotal,
+                courierCharge: courierCharge,
                 total: total,
                 address: address,
                 phone: phone,
@@ -3033,7 +3057,8 @@
             loadUserComplaints();
         }
 
-        document.getElementById('complaintForm')?.addEventListener('submit', (e) => {
+        document.addEventListener('submit', (e) => {
+            if (e.target.id !== 'complaintForm') return;
             e.preventDefault();
             const subject = document.getElementById('complaintSubject').value.trim();
             const desc = document.getElementById('complaintDescription').value.trim();
@@ -3188,6 +3213,16 @@
                     alert(t('fine_applied', { fine: fine.toFixed(2) }));
                 }
                 saveOrders();
+                payouts.push({
+                    id: Date.now() + Math.random() * 1000,
+                    orderId: order.id,
+                    sellerId: order.sellerId,
+                    sellerName: order.sellerName,
+                    amount: order.total - (order.fine || 0),
+                    releasedAt: order.releaseDate,
+                    status: 'released'
+                });
+                savePayouts();
                 alert(t('payment_released'));
                 showView('admin');
             }
@@ -3233,7 +3268,8 @@
             order.phone = phone;
             order.status = status;
             order.items = newItems;
-            order.total = newItems.reduce((s, i) => s + (i.price * i.quantity), 0);
+            order.subtotal = newItems.reduce((s, i) => s + (i.price * i.quantity), 0);
+            order.total = order.subtotal + (order.courierCharge || 0);
             saveOrders();
             document.getElementById('editOrderMessage').innerHTML = t('order_updated');
             setTimeout(() => {
@@ -4044,7 +4080,7 @@
             const databaseKeys = new Set([
                 'bridge_products', 'bridge_users', 'bridge_orders', 'bridge_reviews',
                 'seller_ratings', 'bridge_payouts', 'bridge_banned_users',
-                'bridge_complaints', 'bridge_inquiries'
+                'bridge_complaints', 'bridge_inquiries', 'bridge_cart'
             ]);
             const syncedFlag = 'bridge_mongodb_loaded';
             const nativeSetItem = Storage.prototype.setItem;
@@ -4066,6 +4102,17 @@
                         Object.entries(databaseState).forEach(([key, value]) => {
                             nativeSetItem.call(localStorage, key, JSON.stringify(value));
                         });
+                        await Promise.all([...databaseKeys].map(async (key) => {
+                            if (Object.prototype.hasOwnProperty.call(databaseState, key)) return;
+                            const saved = localStorage.getItem(key);
+                            if (saved !== null) {
+                                await request(`/api/state/${key}`, {
+                                    method: 'PUT',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({ value: JSON.parse(saved) })
+                                });
+                            }
+                        }));
                         sessionStorage.setItem(syncedFlag, 'yes');
                         window.location.reload();
                         return;
