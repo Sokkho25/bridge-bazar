@@ -3102,10 +3102,40 @@
         function renderAdminComplaints() {
             const userComplaints = complaints.filter(c => c.role !== 'admin');
             if (userComplaints.length === 0) return '<p>No complaints from buyers or sellers.</p>';
-            return `<div>${userComplaints.slice().reverse().map(c => `<div class="complaint-card"><div class="complaint-header"><span><strong>${escapeHtml(c.userName)} (${c.role})</strong> - ${escapeHtml(c.subject)}</span><span class="complaint-status ${c.status === 'resolved' ? 'status-resolved' : 'status-pending'}">${c.status === 'resolved' ? t('resolved') : t('pending')}</span></div><p>${escapeHtml(c.description)}</p>${c.imageData ? `<img src="${c.imageData}" class="complaint-image">` : ''}<small>${new Date(c.date).toLocaleString()}</small>${
-                            c.adminReplies && c.adminReplies.length ? `<div class="reply-box"><strong>${t('admin_reply')}:</strong>${c.adminReplies.map(r => `<div class="reply-text"><small>${new Date(r.date).toLocaleString()}</small><br>${escapeHtml(r.message)}</div>`).join('')}</div>` : ''
-                        }<div class="admin-reply-area"><input type="text" class="admin-reply-input" id="replyInput_${c.id}" placeholder="Type your reply..."><button class="edit-btn" onclick="sendAdminReply(${c.id})">${t('reply')}</button><button class="update-stock-btn" style="margin-left:0.5rem;" onclick="resolveComplaint(${c.id})">${c.status === 'resolved' ? t('resolved') : t('resolve')}</button></div></div>`).join('')}</div>`;
+            return `<div>
+                <input id="adminComplaintSearch" type="search" placeholder="Find by user name, username, mobile, or complaint subject..." oninput="filterAdminComplaints(this.value)" style="width:100%; padding:0.7rem 1rem; border:1px solid #cfe1c3; border-radius:12px; margin-bottom:1rem; font-family:inherit;">
+                <div id="adminComplaintsList">${userComplaints.slice().reverse().map(c => {
+                    const user = users.find(u => u.username === c.userId);
+                    const userName = user?.fullName || c.userName || c.userId;
+                    const username = user?.username || c.userId || 'Unknown';
+                    const mobile = user?.mobile || 'No mobile number';
+                    const searchable = [userName, username, mobile, c.subject, c.role].join(' ').toLowerCase();
+                    return `<div class="complaint-card admin-complaint-entry" data-search="${escapeHtml(searchable)}">
+                        <div class="complaint-header"><span><strong>${escapeHtml(String(userName))} (${escapeHtml(String(c.role))})</strong> - ${escapeHtml(String(c.subject))}</span><span class="complaint-status ${c.status === 'resolved' ? 'status-resolved' : 'status-pending'}">${c.status === 'resolved' ? t('resolved') : t('pending')}</span></div>
+                        <div style="display:flex; gap:0.5rem; flex-wrap:wrap; margin:0.45rem 0;"><span style="background:#e8f5e9; color:#1b5e20; border-radius:20px; padding:0.2rem 0.65rem; font-size:0.75rem;">👤 @${escapeHtml(String(username))}</span><span style="background:#fff3e0; color:#8a4b08; border-radius:20px; padding:0.2rem 0.65rem; font-size:0.75rem;">📞 ${escapeHtml(String(mobile))}</span><button type="button" class="edit-btn" style="padding:0.2rem 0.65rem;" onclick='findComplaintUser(${JSON.stringify(username)})'>Find user</button></div>
+                        <p>${escapeHtml(String(c.description))}</p>${c.imageData ? `<img src="${c.imageData}" class="complaint-image">` : ''}<small>Submitted: ${new Date(c.date).toLocaleString()}</small>${
+                            c.adminReplies && c.adminReplies.length ? `<div class="reply-box"><strong>${t('admin_reply')}:</strong>${c.adminReplies.map(r => `<div class="reply-text"><small>${new Date(r.date).toLocaleString()}</small><br>${escapeHtml(String(r.message))}</div>`).join('')}</div>` : ''
+                        }<div class="admin-reply-area"><input type="text" class="admin-reply-input" id="replyInput_${c.id}" placeholder="Type your reply..."><button class="edit-btn" onclick="sendAdminReply(${c.id})">${t('reply')}</button><button class="update-stock-btn" style="margin-left:0.5rem;" onclick="resolveComplaint(${c.id})">${c.status === 'resolved' ? t('resolved') : t('resolve')}</button></div></div>`;
+                }).join('')}</div></div>`;
         }
+
+        window.filterAdminComplaints = function(query) {
+            const search = String(query || '').trim().toLowerCase();
+            document.querySelectorAll('.admin-complaint-entry').forEach(entry => {
+                entry.style.display = !search || entry.dataset.search.includes(search) ? '' : 'none';
+            });
+        };
+
+        window.findComplaintUser = function(username) {
+            switchAdminTab('users');
+            setTimeout(() => {
+                const row = [...document.querySelectorAll('[data-admin-user]')].find(item => item.dataset.adminUser === username);
+                if (!row) return;
+                row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                row.style.background = '#fff3bf';
+                setTimeout(() => { row.style.background = ''; }, 2200);
+            }, 50);
+        };
 
         window.sendAdminReply = function(complaintId) {
             const input = document.getElementById(`replyInput_${complaintId}`);
@@ -3134,13 +3164,13 @@
             const allSellers = users.filter(u => u.role === 'seller');
             const allBuyers = users.filter(u => u.role === 'buyer');
             let sellersHTML = allSellers.map(s =>
-                    `<tr><td>${s.fullName}</td><td>${s.username}</td><td>${s.mobile}</td><td>${s.address}</td>
+                    `<tr data-admin-user="${escapeHtml(String(s.username))}"><td>${s.fullName}</td><td>${s.username}</td><td>${s.mobile}</td><td>${s.address}</td>
                     <td><button class="edit-btn" onclick="adminEditUserFull('${s.username}')">${t('edit')}</button></td>
                     <td><button class="delete-btn" onclick="removeUser('${s.username}')">${t('delete')}</button></td>
                     <td><span style="font-size:0.7rem; color:#888;">Bk: ${s.bkash||'N/A'}, Ng: ${s.nagad||'N/A'}, Rk: ${s.rocket||'N/A'}, Bank: ${s.bankAccount||'N/A'}</span></td></tr>`
                 ).join('');
             let buyersHTML = allBuyers.map(b =>
-                    `<tr><td>${b.fullName}</td><td>${b.username}</td><td>${b.mobile}</td><td>${b.address}</td><td><button class="edit-btn" onclick="adminEditUserFull('${b.username}')">${t('edit')}</button></td><td><button class="delete-btn" onclick="removeUser('${b.username}')">${t('delete')}</button></td><td>—</td></tr>`
+                    `<tr data-admin-user="${escapeHtml(String(b.username))}"><td>${b.fullName}</td><td>${b.username}</td><td>${b.mobile}</td><td>${b.address}</td><td><button class="edit-btn" onclick="adminEditUserFull('${b.username}')">${t('edit')}</button></td><td><button class="delete-btn" onclick="removeUser('${b.username}')">${t('delete')}</button></td><td>&mdash;</td></tr>`
                 ).join('');
             return `<div><h3 style="color:#1c5a2d; margin-top:0.5rem;">Sellers</h3><table class="user-table"><tr><th>Name</th><th>Username</th><th>Mobile</th><th>Address</th><th>Action</th><th></th><th>Payment Accounts</th></tr>${sellersHTML||'<tr><td colspan="7">No sellers</td></tr>'}</table><h3 style="color:#1c5a2d; margin-top:1.5rem;">Buyers</h3><table class="user-table"><tr><th>Name</th><th>Username</th><th>Mobile</th><th>Address</th><th>Action</th><th></th><th>Payment Accounts</th></tr>${buyersHTML||'<tr><td colspan="7">No buyers</td></tr>'}</table></div>`;
         }
