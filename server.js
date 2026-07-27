@@ -64,8 +64,9 @@ async function mirrorStateToCollection(key, value) {
   const Model = collectionModels[key];
   if (!Model) return;
   await Model.deleteMany({});
-  if (!Array.isArray(value) || value.length === 0) return;
-  const documents = value.map((item) => (
+  const entries = Array.isArray(value) ? value : (value && typeof value === 'object' ? [value] : []);
+  if (entries.length === 0) return;
+  const documents = entries.map((item) => (
     item && typeof item === 'object' && !Array.isArray(item) ? { ...item } : { value: item }
   ));
   // An earlier version of the project created a unique `orderId` index. The
