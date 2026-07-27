@@ -2154,8 +2154,11 @@
 
         function saveUsers() { localStorage.setItem('bridge_users', JSON.stringify(users)); }
 
-        function saveCart() { localStorage.setItem('bridge_cart', JSON.stringify(cart));
-            updateCartUI(); }
+        function saveCart() {
+            localStorage.setItem('bridge_cart', JSON.stringify(cart));
+            window.persistBridgeState?.('bridge_cart', cart);
+            updateCartUI();
+        }
 
         function saveRatings() { localStorage.setItem('seller_ratings', JSON.stringify(sellerRatings)); }
 
@@ -4144,6 +4147,15 @@
                 if (!response.ok) throw new Error('Database request failed');
                 return response;
             }
+
+            window.persistBridgeState = function(key, value) {
+                if (!databaseKeys.has(key)) return;
+                request(`/api/state/${key}`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ value })
+                }).catch(() => console.warn('Database sync will retry on the next save.'));
+            };
 
             async function initialiseDatabase() {
                 try {
