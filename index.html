@@ -2491,20 +2491,26 @@
             const courierCharge = getCourierCharge(deliveryMethod);
             const selectedPaymentMethod = document.getElementById('checkoutPaymentMethod')?.value || 'cash_on_delivery';
             const sellerIds = [...new Set(cart.map(item => item.sellerId))];
-            const paymentDetails = sellerIds.map(sellerId => {
-                const seller = users.find(user => user.sellerId === sellerId);
-                if (!seller) return '';
-                const details = [
-                    seller.bkash ? `bKash: ${escapeHtml(String(seller.bkash))}` : '',
-                    seller.nagad ? `Nagad: ${escapeHtml(String(seller.nagad))}` : '',
-                    seller.rocket ? `Rocket: ${escapeHtml(String(seller.rocket))}` : '',
-                    seller.bankAccount ? `Bank: ${escapeHtml(String(seller.bankAccount))}` : ''
-                ].filter(Boolean);
-                if (details.length === 0) return '';
-                return `<div style="margin-top:0.35rem;"><strong>${escapeHtml(seller.fullName || seller.username)}</strong><br>${details.join('<br>')}</div>`;
-            }).filter(Boolean).join('');
-            const paymentSection = selectedPaymentMethod === 'cash_on_delivery' || !paymentDetails ? '' :
-                `<div style="margin-top:0.8rem; padding:0.7rem; border-radius:10px; background:#eef5ea; color:#1b4d2a; font-size:0.85rem;"><strong>Seller payment details</strong><br><small>Send payment to the seller account below, then enter your transaction ID.</small>${paymentDetails}</div>`;
+            const paymentConfig = {
+                bkash: { field: 'bkash', label: 'bKash number' },
+                nagad: { field: 'nagad', label: 'Nagad number' },
+                rocket: { field: 'rocket', label: 'Rocket number' },
+                bank: { field: 'bankAccount', label: 'bank account details' }
+            }[selectedPaymentMethod];
+            const paymentDetails = paymentConfig ? sellerIds.map(sellerId => {
+                const seller = users.find(user => String(user.sellerId) === String(sellerId));
+                const cartSeller = cart.find(item => String(item.sellerId) === String(sellerId));
+                const sellerName = seller?.fullName || seller?.username || cartSeller?.sellerName || 'Seller';
+                const account = seller?.[paymentConfig.field];
+                const accountText = typeof account === 'string' ? account.trim() : '';
+                return `<div style="margin-top:0.45rem;"><strong>${escapeHtml(String(sellerName))}</strong><br>${
+                    accountText
+                        ? `Pay to ${paymentConfig.label}: <strong>${escapeHtml(accountText)}</strong>`
+                        : `<span style="color:#b42318;">No ${paymentConfig.label} added by this seller.</span>`
+                }</div>`;
+            }).join('') : '';
+            const paymentSection = paymentConfig ?
+                `<div style="margin-top:0.8rem; padding:0.7rem; border-radius:10px; background:#eef5ea; color:#1b4d2a; font-size:0.85rem;"><strong>Seller payment details</strong><br><small>Pay the exact total to the account below, then enter your transaction ID.</small>${paymentDetails}</div>` : '';
             summary.innerHTML = cart.map(item =>
                 `<div class="item-row"><span>${item.name} x ${item.quantity}</span><span>&#2547;${(item.price * item.quantity).toFixed(2)}</span></div>`
             ).join('') +
