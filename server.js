@@ -305,10 +305,10 @@ app.post('/api/products', async (req, res, next) => {
 
     const imageList = Array.isArray(input.images) ? input.images : [];
     const images = imageList.filter((image) =>
-      typeof image === 'string' && (!image.startsWith('data:') || image.length <= 800000)
+      typeof image === 'string' && (!image.startsWith('data:') || image.length <= 600000)
     ).slice(0, 4);
     const imageData = typeof input.imageData === 'string' &&
-      (!input.imageData.startsWith('data:') || input.imageData.length <= 800000)
+      (!input.imageData.startsWith('data:') || input.imageData.length <= 600000)
       ? input.imageData : (images[0] || null);
 
     const state = await AppState.findOne({ key: 'bridge_products' }).lean();

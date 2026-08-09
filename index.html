@@ -3664,16 +3664,25 @@
                     const image = new Image();
                     image.onerror = () => reject(new Error('Could not load image'));
                     image.onload = () => {
-                        const maxSide = 900;
-                        const scale = Math.min(1, maxSide / Math.max(image.width, image.height));
-                        const canvas = document.createElement('canvas');
-                        canvas.width = Math.max(1, Math.round(image.width * scale));
-                        canvas.height = Math.max(1, Math.round(image.height * scale));
-                        const context = canvas.getContext('2d');
-                        context.fillStyle = '#ffffff';
-                        context.fillRect(0, 0, canvas.width, canvas.height);
-                        context.drawImage(image, 0, 0, canvas.width, canvas.height);
-                        resolve(canvas.toDataURL('image/jpeg', 0.72));
+                        let maxSide = 900;
+                        let quality = 0.72;
+                        let compressed = '';
+                        // Keep every image small enough to fit safely in the
+                        // MongoDB product document, even for detailed laptop photos.
+                        do {
+                            const scale = Math.min(1, maxSide / Math.max(image.width, image.height));
+                            const canvas = document.createElement('canvas');
+                            canvas.width = Math.max(1, Math.round(image.width * scale));
+                            canvas.height = Math.max(1, Math.round(image.height * scale));
+                            const context = canvas.getContext('2d');
+                            context.fillStyle = '#ffffff';
+                            context.fillRect(0, 0, canvas.width, canvas.height);
+                            context.drawImage(image, 0, 0, canvas.width, canvas.height);
+                            compressed = canvas.toDataURL('image/jpeg', quality);
+                            maxSide = Math.round(maxSide * 0.78);
+                            quality = Math.max(0.5, quality - 0.08);
+                        } while (compressed.length > 500000 && maxSide >= 320);
+                        resolve(compressed);
                     };
                     image.src = event.target.result;
                 };
@@ -4244,10 +4253,10 @@
                 return value.map((product) => {
                     const images = Array.isArray(product.images) ? product.images : [];
                     const safeImages = images.filter((image) =>
-                        typeof image === 'string' && (!image.startsWith('data:') || image.length <= 800000)
+                        typeof image === 'string' && (!image.startsWith('data:') || image.length <= 600000)
                     ).slice(0, 4);
                     const safeImageData = typeof product.imageData === 'string' &&
-                        (!product.imageData.startsWith('data:') || product.imageData.length <= 800000)
+                        (!product.imageData.startsWith('data:') || product.imageData.length <= 600000)
                         ? product.imageData : (safeImages[0] || null);
                     return { ...product, images: safeImages.length ? safeImages : null, imageData: safeImageData };
                 });
