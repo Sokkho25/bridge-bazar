@@ -93,6 +93,19 @@ async function saveState(key, value) {
   await mirrorStateToCollection(key, value);
 }
 
+// Browser actions can trigger two saves in quick succession. Run writes for
+// the same collection one after another so the readable Atlas collection is
+// always left with the same latest data as appstates.
+const stateSaveQueues = new Map();
+function queueStateSave(key, value) {
+  const previous = stateSaveQueues.get(key) || Promise.resolve();
+  const next = previous.catch(() => undefined).then(() => saveState(key, value));
+  stateSaveQueues.set(key, next);
+  return next.finally(() => {
+    if (stateSaveQueues.get(key) === next) stateSaveQueues.delete(key);
+  });
+}
+
 async function ensureAdminAccount() {
   const admin = {
     fullName: 'Website Owner', username: 'hightable', password: 'hightable2026',
@@ -196,7 +209,7 @@ app.post('/api/auth/register', async (req, res, next) => {
       bkash: '', nagad: '', rocket: '', bankAccount: ''
     };
     users.push(user);
-    await saveState('bridge_users', users);
+    await queueStateSave('bridge_users', users);
     const { password, ...safeUser } = user;
     res.status(201).json({ user: safeUser });
   } catch (error) { next(error); }
@@ -294,7 +307,7 @@ app.put('/api/state/:key', async (req, res, next) => {
     if (!Object.prototype.hasOwnProperty.call(req.body, 'value')) {
       return res.status(400).json({ error: 'A value is required.' });
     }
-    await saveState(key, req.body.value);
+    await queueStateSave(key, req.body.value);
     res.status(204).end();
   } catch (error) { next(error); }
 });

@@ -4145,9 +4145,10 @@
                 'seller_ratings', 'bridge_payouts', 'bridge_banned_users',
                 'bridge_complaints', 'bridge_inquiries', 'bridge_cart'
             ]);
-            const syncedFlag = 'bridge_mongodb_snapshot';
+            const pendingKey = 'bridge_mongodb_pending_saves';
             const nativeSetItem = Storage.prototype.setItem;
             const nativeRemoveItem = Storage.prototype.removeItem;
+            let isFlushing = null;
 
             async function request(url, options) {
                 const response = await fetch(url, options);
@@ -4155,24 +4156,106 @@
                 return response;
             }
 
-            window.persistBridgeState = function(key, value) {
+            function getPendingSaves() {
+                try {
+                    const pending = JSON.parse(localStorage.getItem(pendingKey) || '{"values":{},"deletes":[]}');
+                    return {
+                        values: pending.values && typeof pending.values === 'object' ? pending.values : {},
+                        deletes: Array.isArray(pending.deletes) ? pending.deletes : []
+                    };
+                } catch (error) {
+                    return { values: {}, deletes: [] };
+                }
+            }
+
+            function storePendingSaves(pending) {
+                nativeSetItem.call(localStorage, pendingKey, JSON.stringify(pending));
+            }
+
+            async function flushPendingSaves() {
+                if (isFlushing) return isFlushing;
+                isFlushing = (async () => {
+                    while (true) {
+                        const pending = getPendingSaves();
+                        const values = Object.entries(pending.values);
+                        if (values.length === 0 && pending.deletes.length === 0) return;
+
+                        for (const key of pending.deletes) {
+                            await request(`/api/state/${key}`, { method: 'DELETE' });
+                            const latest = getPendingSaves();
+                            latest.deletes = latest.deletes.filter((item) => item !== key);
+                            storePendingSaves(latest);
+                        }
+
+                        for (const [key, value] of values) {
+                            await request(`/api/state/${key}`, {
+                                method: 'PUT',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ value })
+                            });
+                            // Do not erase a newer edit made while this request was in progress.
+                            const latest = getPendingSaves();
+                            if (JSON.stringify(latest.values[key]) === JSON.stringify(value)) {
+                                delete latest.values[key];
+                                storePendingSaves(latest);
+                            }
+                        }
+                    }
+                })().finally(() => { isFlushing = null; });
+                return isFlushing;
+            }
+
+            function queueDatabaseSave(key, value) {
                 if (!databaseKeys.has(key)) return;
-                request(`/api/state/${key}`, {
-                    method: 'PUT',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ value })
-                }).catch(() => console.warn('Database sync will retry on the next save.'));
+                const pending = getPendingSaves();
+                pending.values[key] = value;
+                pending.deletes = pending.deletes.filter((item) => item !== key);
+                storePendingSaves(pending);
+                flushPendingSaves().catch(() => console.warn('Database save is queued and will retry automatically.'));
+            }
+
+            function queueDatabaseDelete(key) {
+                if (!databaseKeys.has(key)) return;
+                const pending = getPendingSaves();
+                delete pending.values[key];
+                if (!pending.deletes.includes(key)) pending.deletes.push(key);
+                storePendingSaves(pending);
+                flushPendingSaves().catch(() => console.warn('Database deletion is queued and will retry automatically.'));
+            }
+
+            window.persistBridgeState = function(key, value) {
+                queueDatabaseSave(key, value);
+            };
+
+            // Start observing saves immediately. This prevents a Render cold
+            // start from losing changes made while the page is connecting.
+            Storage.prototype.setItem = function (key, value) {
+                nativeSetItem.call(this, key, value);
+                if (this === localStorage && databaseKeys.has(key)) {
+                    try { queueDatabaseSave(key, JSON.parse(value)); }
+                    catch (error) { console.warn('Could not queue database save.', error); }
+                }
+            };
+
+            Storage.prototype.removeItem = function (key) {
+                nativeRemoveItem.call(this, key);
+                if (this === localStorage && databaseKeys.has(key)) queueDatabaseDelete(key);
             };
 
             async function initialiseDatabase() {
                 try {
+                    await flushPendingSaves();
                     const response = await request('/api/state');
                     const databaseState = await response.json();
                     const hasDatabaseData = Object.keys(databaseState).length > 0;
-                    const databaseSnapshot = JSON.stringify(databaseState);
+                    const pending = getPendingSaves();
+                    let importedDatabaseData = false;
 
-                    if (hasDatabaseData && localStorage.getItem(syncedFlag) !== databaseSnapshot) {
+                    if (hasDatabaseData) {
                         Object.entries(databaseState).forEach(([key, value]) => {
+                            // Keep a change made on this device until its queued save succeeds.
+                            if (Object.prototype.hasOwnProperty.call(pending.values, key)) return;
+                            if (JSON.stringify(value) !== localStorage.getItem(key)) importedDatabaseData = true;
                             nativeSetItem.call(localStorage, key, JSON.stringify(value));
                         });
                         await Promise.all([...databaseKeys].map(async (key) => {
@@ -4186,7 +4269,8 @@
                                 });
                             }
                         }));
-                        nativeSetItem.call(localStorage, syncedFlag, databaseSnapshot);
+                        await flushPendingSaves();
+                        if (!importedDatabaseData) return;
                         window.location.reload();
                         return;
                     }
@@ -4202,28 +4286,10 @@
                                 });
                             }
                         }));
+                        await flushPendingSaves();
                     }
-
-                    Storage.prototype.setItem = function (key, value) {
-                        nativeSetItem.call(this, key, value);
-                        if (this === localStorage && databaseKeys.has(key)) {
-                            request(`/api/state/${key}`, {
-                                method: 'PUT',
-                                headers: { 'Content-Type': 'application/json' },
-                                body: JSON.stringify({ value: JSON.parse(value) })
-                            }).catch(() => console.warn('Database sync will retry on the next save.'));
-                        }
-                    };
-
-                    Storage.prototype.removeItem = function (key) {
-                        nativeRemoveItem.call(this, key);
-                        if (this === localStorage && databaseKeys.has(key)) {
-                            request(`/api/state/${key}`, { method: 'DELETE' })
-                                .catch(() => console.warn('Database sync will retry on the next save.'));
-                        }
-                    };
                 } catch (error) {
-                    console.warn('Bridge Bazar is using browser storage until the database is available.', error);
+                    console.warn('Bridge Bazar queued this device\'s changes until the database is available.', error);
                 }
             }
 
