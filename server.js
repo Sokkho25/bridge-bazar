@@ -123,6 +123,27 @@ async function ensureAdminAccount() {
   await mirrorStateToCollection('bridge_users', users);
 }
 
+// Older products were linked only by a numeric sellerId. Add the seller
+// username too, so accounts with the same display name remain separate.
+async function ensureProductOwners() {
+  const [usersState, productsState] = await Promise.all([
+    AppState.findOne({ key: 'bridge_users' }).lean(),
+    AppState.findOne({ key: 'bridge_products' }).lean()
+  ]);
+  const users = Array.isArray(usersState?.value) ? usersState.value : [];
+  const products = Array.isArray(productsState?.value) ? productsState.value : [];
+  let changed = false;
+  products.forEach((product) => {
+    if (product.sellerUsername) return;
+    const seller = users.find((user) => String(user.sellerId ?? '') === String(product.sellerId ?? ''));
+    if (seller?.username) {
+      product.sellerUsername = seller.username;
+      changed = true;
+    }
+  });
+  if (changed) await queueStateSave('bridge_products', products);
+}
+
 app.use(express.json({ limit: '12mb' }));
 
 // Demo OTP flow. A production version should replace returning `otp` below
@@ -330,6 +351,7 @@ app.post('/api/products', async (req, res, next) => {
       images: images.length ? images : null,
       imageData,
       sellerId: input.sellerId ?? (existingIndex >= 0 ? products[existingIndex].sellerId : null),
+      sellerUsername: String(input.sellerUsername || (existingIndex >= 0 ? products[existingIndex].sellerUsername : '')),
       sellerName: String(input.sellerName || (existingIndex >= 0 ? products[existingIndex].sellerName : 'Seller')),
       sellerPhone: String(input.sellerPhone || (existingIndex >= 0 ? products[existingIndex].sellerPhone : ''))
     };
@@ -388,6 +410,7 @@ mongoose.connect(mongoUri)
       // Older saved data is migrated after the site is available. A migration
       // problem must never prevent customers from using the application.
       ensureAdminAccount()
+        .then(() => ensureProductOwners())
         .then(() => AppState.find({}).lean())
         .then((savedState) => Promise.all(savedState.map(({ key, value }) => mirrorStateToCollection(key, value))))
         .catch((error) => console.error('Existing-data migration failed:', error.message));

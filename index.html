@@ -2372,6 +2372,12 @@
             return String(first ?? '') === String(second ?? '');
         }
 
+        function belongsToCurrentSeller(product) {
+            if (!currentUser || currentUser.role !== 'seller') return false;
+            if (product.sellerUsername) return product.sellerUsername === currentUser.username;
+            return sameSellerId(product.sellerId, currentUser.sellerId || 1);
+        }
+
         function getSellerRating(sellerId) {
             const ratings = sellerRatings.filter(r => sameSellerId(r.sellerId, sellerId));
             if (ratings.length === 0) return null;
@@ -2400,8 +2406,7 @@
         // ===== RENDER PRODUCTS =====
         function renderProducts() {
             if (!productGrid) return;
-            let filtered = (currentUser?.role === 'seller') ? products.filter(p => sameSellerId(p.sellerId, currentUser.sellerId ||
-                1)) : products;
+            let filtered = (currentUser?.role === 'seller') ? products.filter(belongsToCurrentSeller) : products;
             if (filtered.length === 0) {
                 productGrid.innerHTML =
                     `<div class="empty-state"><i class="fas fa-box-open"></i><h3>${t('no_products')}</h3><p>${currentUser?.role === 'seller' ? t('seller_no_products') : t('no_products')}</p></div>`;
@@ -2417,7 +2422,7 @@
                 const btnDisabled = !inStock ? 'disabled' : '';
                 const btnText = inStock ? t('add_to_cart') : t('out_of_stock_label');
 
-                const isOwner = currentUser && currentUser.role === 'seller' && sameSellerId(p.sellerId, currentUser.sellerId);
+                const isOwner = belongsToCurrentSeller(p);
 
                 const ratingDisplay = rating ? `<span class="rating-stars"> ★ ${rating.avg} (${rating.count})</span>` : '';
 
@@ -2460,7 +2465,7 @@
                 'No ratings yet';
 
             const stockEl = document.getElementById('detailStock');
-            const isOwner = currentUser && currentUser.role === 'seller' && sameSellerId(p.sellerId, currentUser.sellerId);
+            const isOwner = belongsToCurrentSeller(p);
             const qtyInput = document.getElementById('detailQty');
             const maxStock = p.stock;
 
@@ -2563,7 +2568,7 @@
             const p = products.find(pr => pr.id === currentDetailProductId);
             if (!p) return;
             if (p.stock <= 0) { alert(t('out_of_stock')); return; }
-            if (currentUser && currentUser.role === 'seller' && sameSellerId(p.sellerId, currentUser.sellerId)) {
+            if (belongsToCurrentSeller(p)) {
                 alert(t('cannot_buy_own'));
                 return;
             }
@@ -2603,7 +2608,7 @@
         window.addToCart = function(id) {
             if (currentUser?.role === 'seller') {
                 const p = products.find(pr => pr.id === id);
-                if (p && sameSellerId(p.sellerId, currentUser.sellerId)) {
+                if (p && belongsToCurrentSeller(p)) {
                     alert(t('cannot_buy_own'));
                     return;
                 }
@@ -2859,7 +2864,7 @@
 
         // ===== DASHBOARD RENDERERS =====
         function renderSellerDashboard() {
-            const sellerProducts = products.filter(p => sameSellerId(p.sellerId, currentUser.sellerId || 1));
+            const sellerProducts = products.filter(belongsToCurrentSeller);
             const sellerOrders = orders.filter(o => sameSellerId(o.sellerId, currentUser.sellerId));
             const totalSales = sellerOrders.reduce((s, o) => s + o.total, 0);
             const pendingOrders = sellerOrders.filter(o => o.status !== 'delivered' && o.status !== 'cancelled');
@@ -3723,6 +3728,7 @@
                 images: images.length > 0 ? images : existing?.images || [existing?.imageData].filter(Boolean),
                 imageData: images.length > 0 ? images[0] : existing?.imageData || null,
                 sellerId: currentUser?.sellerId || existing?.sellerId || 1,
+                sellerUsername: currentUser?.username || existing?.sellerUsername || '',
                 sellerName: currentUser?.fullName || existing?.sellerName || 'Seller',
                 sellerPhone: currentUser?.mobile || existing?.sellerPhone || 'N/A'
             };
