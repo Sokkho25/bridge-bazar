@@ -2368,8 +2368,12 @@
             cartTotalSpan = document.getElementById('cartTotal'),
             cartCountSpan = document.getElementById('cartCount');
 
+        function sameSellerId(first, second) {
+            return String(first ?? '') === String(second ?? '');
+        }
+
         function getSellerRating(sellerId) {
-            const ratings = sellerRatings.filter(r => r.sellerId === sellerId);
+            const ratings = sellerRatings.filter(r => sameSellerId(r.sellerId, sellerId));
             if (ratings.length === 0) return null;
             const avg = ratings.reduce((s, r) => s + r.rating, 0) / ratings.length;
             return { avg: avg.toFixed(1), count: ratings.length };
@@ -2396,7 +2400,7 @@
         // ===== RENDER PRODUCTS =====
         function renderProducts() {
             if (!productGrid) return;
-            let filtered = (currentUser?.role === 'seller') ? products.filter(p => p.sellerId === (currentUser.sellerId ||
+            let filtered = (currentUser?.role === 'seller') ? products.filter(p => sameSellerId(p.sellerId, currentUser.sellerId ||
                 1)) : products;
             if (filtered.length === 0) {
                 productGrid.innerHTML =
@@ -2413,7 +2417,7 @@
                 const btnDisabled = !inStock ? 'disabled' : '';
                 const btnText = inStock ? t('add_to_cart') : t('out_of_stock_label');
 
-                const isOwner = currentUser && currentUser.role === 'seller' && p.sellerId === currentUser.sellerId;
+                const isOwner = currentUser && currentUser.role === 'seller' && sameSellerId(p.sellerId, currentUser.sellerId);
 
                 const ratingDisplay = rating ? `<span class="rating-stars"> ★ ${rating.avg} (${rating.count})</span>` : '';
 
@@ -2456,7 +2460,7 @@
                 'No ratings yet';
 
             const stockEl = document.getElementById('detailStock');
-            const isOwner = currentUser && currentUser.role === 'seller' && p.sellerId === currentUser.sellerId;
+            const isOwner = currentUser && currentUser.role === 'seller' && sameSellerId(p.sellerId, currentUser.sellerId);
             const qtyInput = document.getElementById('detailQty');
             const maxStock = p.stock;
 
@@ -2559,7 +2563,7 @@
             const p = products.find(pr => pr.id === currentDetailProductId);
             if (!p) return;
             if (p.stock <= 0) { alert(t('out_of_stock')); return; }
-            if (currentUser && currentUser.role === 'seller' && p.sellerId === currentUser.sellerId) {
+            if (currentUser && currentUser.role === 'seller' && sameSellerId(p.sellerId, currentUser.sellerId)) {
                 alert(t('cannot_buy_own'));
                 return;
             }
@@ -2599,7 +2603,7 @@
         window.addToCart = function(id) {
             if (currentUser?.role === 'seller') {
                 const p = products.find(pr => pr.id === id);
-                if (p && p.sellerId === currentUser.sellerId) {
+                if (p && sameSellerId(p.sellerId, currentUser.sellerId)) {
                     alert(t('cannot_buy_own'));
                     return;
                 }
@@ -2855,8 +2859,8 @@
 
         // ===== DASHBOARD RENDERERS =====
         function renderSellerDashboard() {
-            const sellerProducts = products.filter(p => p.sellerId === (currentUser.sellerId || 1));
-            const sellerOrders = orders.filter(o => o.sellerId === currentUser.sellerId);
+            const sellerProducts = products.filter(p => sameSellerId(p.sellerId, currentUser.sellerId || 1));
+            const sellerOrders = orders.filter(o => sameSellerId(o.sellerId, currentUser.sellerId));
             const totalSales = sellerOrders.reduce((s, o) => s + o.total, 0);
             const pendingOrders = sellerOrders.filter(o => o.status !== 'delivered' && o.status !== 'cancelled');
 
@@ -3217,7 +3221,7 @@
                 const editBtn = `<button class="edit-btn" onclick="openEditOrderModal(${o.id})">${t('edit')}</button>`;
                 const trxInfo = o.transactionId ? `Trx: ${o.transactionId}` : 'Cash on Delivery';
                 // Get seller payment accounts
-                const seller = users.find(u => u.sellerId === o.sellerId);
+                const seller = users.find(u => sameSellerId(u.sellerId, o.sellerId));
                 const payInfo = seller ? `Bk:${seller.bkash||'N/A'} Ng:${seller.nagad||'N/A'} Rk:${seller.rocket||'N/A'} Bank:${seller.bankAccount||'N/A'}` : 'N/A';
                 return `<div class="order-item">
                     <div><strong>#${o.id}</strong> - ${o.buyerName}</div>
@@ -3239,9 +3243,9 @@
             let html = `<table class="user-table">
                 <tr><th>${t('seller_name')}</th><th>${t('total_orders_count')}</th><th>${t('total_sales')}</th><th>${t('pending_payments')}</th><th>${t('released_payments')}</th><th>Payment Accounts</th></tr>`;
             sellerIds.forEach(sid => {
-                const seller = users.find(u => u.sellerId === sid);
+                const seller = users.find(u => sameSellerId(u.sellerId, sid));
                 const sellerName = seller ? seller.fullName : `Seller #${sid}`;
-                const sellerOrders = orders.filter(o => o.sellerId === sid);
+                const sellerOrders = orders.filter(o => sameSellerId(o.sellerId, sid));
                 const totalOrders = sellerOrders.length;
                 const totalSales = sellerOrders.reduce((s, o) => s + o.total, 0);
                 const pendingTotal = sellerOrders.filter(o => !o.released).reduce((s, o) => s + o.total, 0);
@@ -3804,7 +3808,7 @@
                     document.getElementById('productModal').style.display = 'flex'; };
                 const histBtn = document.getElementById('downloadHistoryBtn');
                 if (histBtn && currentUser?.role === 'seller') {
-                    const sellerOrders = orders.filter(o => o.sellerId === currentUser.sellerId);
+                    const sellerOrders = orders.filter(o => sameSellerId(o.sellerId, currentUser.sellerId));
                     histBtn.onclick = () => downloadSellingHistory(sellerOrders);
                 }
                 const recBtn = document.getElementById('downloadReceiptsBtn');
@@ -3995,7 +3999,7 @@
             }
 
             const existing = sellerRatings.find(r =>
-                r.sellerId === currentRatingSellerId &&
+                sameSellerId(r.sellerId, currentRatingSellerId) &&
                 r.buyerId === currentUser.username
             );
             if (existing) {
