@@ -3640,38 +3640,59 @@
 
         // ===== PRODUCT IMAGE PREVIEW =====
         let tempImageFiles = [];
+        let productImagesReady = Promise.resolve();
 
-        window.previewProductImages = function(input) {
+        function renderTempProductImages() {
             const container = document.getElementById('imagePreviewList');
             container.innerHTML = '';
-            tempImageFiles = [];
-            if (input.files) {
-                Array.from(input.files).forEach((file, idx) => {
-                    const reader = new FileReader();
-                    reader.onload = function(e) {
-                        tempImageFiles.push(e.target.result);
-                        const div = document.createElement('div');
-                        div.className = 'preview-item';
-                        div.innerHTML =
-                            `<img src="${e.target.result}" alt="preview"><button type="button" class="remove-img" onclick="removeTempImage(${idx})">×</button>`;
-                        container.appendChild(div);
+            tempImageFiles.forEach((image, idx) => {
+                const div = document.createElement('div');
+                div.className = 'preview-item';
+                div.innerHTML =
+                    `<img src="${image}" alt="preview"><button type="button" class="remove-img" onclick="removeTempImage(${idx})">×</button>`;
+                container.appendChild(div);
+            });
+        }
+
+        // Phone photos are often several megabytes. Compress them before they
+        // are placed in the product data so the MongoDB request remains small.
+        function prepareProductImage(file) {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onerror = () => reject(new Error('Could not read image'));
+                reader.onload = (event) => {
+                    const image = new Image();
+                    image.onerror = () => reject(new Error('Could not load image'));
+                    image.onload = () => {
+                        const maxSide = 900;
+                        const scale = Math.min(1, maxSide / Math.max(image.width, image.height));
+                        const canvas = document.createElement('canvas');
+                        canvas.width = Math.max(1, Math.round(image.width * scale));
+                        canvas.height = Math.max(1, Math.round(image.height * scale));
+                        const context = canvas.getContext('2d');
+                        context.fillStyle = '#ffffff';
+                        context.fillRect(0, 0, canvas.width, canvas.height);
+                        context.drawImage(image, 0, 0, canvas.width, canvas.height);
+                        resolve(canvas.toDataURL('image/jpeg', 0.72));
                     };
-                    reader.readAsDataURL(file);
-                });
-            }
+                    image.src = event.target.result;
+                };
+                reader.readAsDataURL(file);
+            });
+        }
+
+        window.previewProductImages = function(input) {
+            tempImageFiles = [];
+            renderTempProductImages();
+            const files = input.files ? Array.from(input.files) : [];
+            productImagesReady = Promise.all(files.map(prepareProductImage))
+                .then((images) => { tempImageFiles = images; renderTempProductImages(); })
+                .catch(() => { tempImageFiles = []; alert('One or more images could not be prepared. Please try again.'); });
         };
 
         window.removeTempImage = function(index) {
             tempImageFiles.splice(index, 1);
-            const container = document.getElementById('imagePreviewList');
-            container.innerHTML = '';
-            tempImageFiles.forEach((img, idx) => {
-                const div = document.createElement('div');
-                div.className = 'preview-item';
-                div.innerHTML =
-                    `<img src="${img}" alt="preview"><button type="button" class="remove-img" onclick="removeTempImage(${idx})">×</button>`;
-                container.appendChild(div);
-            });
+            renderTempProductImages();
             const fileInput = document.getElementById('productImages');
             if (fileInput) fileInput.value = '';
         };
@@ -3714,12 +3735,13 @@
             renderProducts();
         }
 
-        document.getElementById('productForm')?.addEventListener('submit', (e) => {
+        document.getElementById('productForm')?.addEventListener('submit', async (e) => {
             e.preventDefault();
             const name = document.getElementById('productName').value.trim();
             const price = parseFloat(document.getElementById('productPrice').value);
             const stock = parseInt(document.getElementById('productStock').value);
-            const images = tempImageFiles.length > 0 ? tempImageFiles : null;
+            await productImagesReady;
+            const images = [...tempImageFiles];
             saveProductData(name, price, stock, images);
         });
 
@@ -4204,10 +4226,27 @@
                 return isFlushing;
             }
 
+            // MongoDB has a document size limit. New mobile uploads are already
+            // compressed above; this also prevents an older, oversized local
+            // photo from blocking the product details from being saved.
+            function makeDatabaseValue(key, value) {
+                if (key !== 'bridge_products' || !Array.isArray(value)) return value;
+                return value.map((product) => {
+                    const images = Array.isArray(product.images) ? product.images : [];
+                    const safeImages = images.filter((image) =>
+                        typeof image === 'string' && (!image.startsWith('data:') || image.length <= 800000)
+                    ).slice(0, 4);
+                    const safeImageData = typeof product.imageData === 'string' &&
+                        (!product.imageData.startsWith('data:') || product.imageData.length <= 800000)
+                        ? product.imageData : (safeImages[0] || null);
+                    return { ...product, images: safeImages.length ? safeImages : null, imageData: safeImageData };
+                });
+            }
+
             function queueDatabaseSave(key, value) {
                 if (!databaseKeys.has(key)) return;
                 const pending = getPendingSaves();
-                pending.values[key] = value;
+                pending.values[key] = makeDatabaseValue(key, value);
                 pending.deletes = pending.deletes.filter((item) => item !== key);
                 storePendingSaves(pending);
                 flushPendingSaves().catch(() => console.warn('Database save is queued and will retry automatically.'));
