@@ -3518,8 +3518,7 @@
                 if (!response.ok) throw new Error('OTP request failed');
                 const data = await response.json();
                 generatedOtp = true;
-                document.getElementById('signupMessage').innerHTML =
-                    `${t('only_demo', { contact: mobile || email })}<br><strong>Demo OTP: ${data.otp}</strong>`;
+                alert(t('only_demo', { contact: mobile || email }) + `\nYour OTP is: ${data.otp}`);
             } catch (error) {
                 alert('Unable to create an OTP. Please check the server connection and try again.');
                 return;
