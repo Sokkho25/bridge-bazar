@@ -3491,7 +3491,9 @@
             goToStep(1);
         });
 
-        let generatedOtp = null;
+        // This only tracks whether this browser has requested an OTP. The
+        // server is the single source of truth for checking the entered code.
+        let generatedOtp = false;
 
         document.getElementById('sendOtpBtn')?.addEventListener('click', async function() {
             const mobile = document.getElementById('mobile').value.trim();
@@ -3515,8 +3517,9 @@
                 });
                 if (!response.ok) throw new Error('OTP request failed');
                 const data = await response.json();
-                generatedOtp = data.otp;
-                alert(t('only_demo', { contact: mobile || email }) + `\nYour OTP is: ${generatedOtp}`);
+                generatedOtp = true;
+                document.getElementById('signupMessage').innerHTML =
+                    `${t('only_demo', { contact: mobile || email })}<br><strong>Demo OTP: ${data.otp}</strong>`;
             } catch (error) {
                 alert('Unable to create an OTP. Please check the server connection and try again.');
                 return;
@@ -3532,10 +3535,6 @@
                 alert(t('send_otp_first'));
                 return;
             }
-            if (enteredOtp !== generatedOtp) {
-                alert(t('invalid_otp'));
-                return;
-            }
             const mobile = document.getElementById('mobile').value.trim();
             const email = document.getElementById('email').value.trim();
             if (!mobile && !email) {
@@ -3549,7 +3548,8 @@
                     body: JSON.stringify({ contact: mobile || email, username: tempSignupData?.username, otp: enteredOtp })
                 });
                 if (!response.ok) {
-                    alert(t('invalid_otp'));
+                    const data = await response.json().catch(() => ({}));
+                    alert(data.error || t('invalid_otp'));
                     return;
                 }
             } catch (error) {
