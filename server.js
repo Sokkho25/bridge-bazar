@@ -375,6 +375,27 @@ app.post('/api/products', async (req, res, next) => {
   } catch (error) { next(error); }
 });
 
+// The seller dashboard reads its own product list directly from MongoDB. This
+// avoids a stale browser cache hiding products that have already been saved.
+app.get('/api/sellers/:username/products', async (req, res, next) => {
+  try {
+    const username = String(req.params.username || '').trim();
+    const [usersState, productsState] = await Promise.all([
+      AppState.findOne({ key: 'bridge_users' }).lean(),
+      AppState.findOne({ key: 'bridge_products' }).lean()
+    ]);
+    const users = Array.isArray(usersState?.value) ? usersState.value : [];
+    const products = Array.isArray(productsState?.value) ? productsState.value : [];
+    const seller = users.find((user) => user.username === username && user.role === 'seller');
+    if (!seller) return res.status(404).json({ error: 'Seller account not found.' });
+    const sellerProducts = products.filter((product) =>
+      product.sellerUsername === seller.username ||
+      (!product.sellerUsername && String(product.sellerId ?? '') === String(seller.sellerId ?? ''))
+    );
+    res.json({ products: sellerProducts });
+  } catch (error) { next(error); }
+});
+
 // The existing page writes to these endpoints through the small adapter at the
 // bottom of index.html. Keeping this API generic lets the unchanged interface
 // persist every marketplace feature in MongoDB.

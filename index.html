@@ -2378,6 +2378,22 @@
             return sameSellerId(product.sellerId, currentUser.sellerId || 1);
         }
 
+        async function refreshCurrentSellerProducts() {
+            if (!currentUser || currentUser.role !== 'seller') return false;
+            try {
+                const response = await fetch(`/api/sellers/${encodeURIComponent(currentUser.username)}/products`);
+                if (!response.ok) throw new Error('Could not load seller products');
+                const data = await response.json();
+                const otherProducts = products.filter((product) => !belongsToCurrentSeller(product));
+                products = [...otherProducts, ...(Array.isArray(data.products) ? data.products : [])];
+                if (window.setBridgeLocalState) window.setBridgeLocalState('bridge_products', products);
+                return true;
+            } catch (error) {
+                console.warn('Could not refresh seller products from the database.', error);
+                return false;
+            }
+        }
+
         function getSellerRating(sellerId) {
             const ratings = sellerRatings.filter(r => sameSellerId(r.sellerId, sellerId));
             if (ratings.length === 0) return null;
@@ -3837,6 +3853,26 @@
                 if (recBtn && currentUser?.role === 'buyer') {
                     const userOrders = orders.filter(o => o.buyerId === currentUser.username);
                     recBtn.onclick = () => userOrders.forEach(o => downloadReceipt(o));
+                }
+                if (currentUser?.role === 'seller') {
+                    refreshCurrentSellerProducts().then((refreshed) => {
+                        if (!refreshed || dashboardView.style.display === 'none' || currentUser?.role !== 'seller') return;
+                        dashboardView.innerHTML = renderSellerDashboard();
+                        const refreshedAddBtn = document.getElementById('addProductBtn');
+                        if (refreshedAddBtn) refreshedAddBtn.onclick = () => {
+                            editingProductId = null;
+                            document.getElementById('productModalTitle').innerHTML = t('add_product');
+                            document.getElementById('productForm').reset();
+                            document.getElementById('imagePreviewList').innerHTML = '';
+                            tempImageFiles = [];
+                            document.getElementById('productModal').style.display = 'flex';
+                        };
+                        const refreshedHistoryBtn = document.getElementById('downloadHistoryBtn');
+                        if (refreshedHistoryBtn) {
+                            const refreshedOrders = orders.filter(o => sameSellerId(o.sellerId, currentUser.sellerId));
+                            refreshedHistoryBtn.onclick = () => downloadSellingHistory(refreshedOrders);
+                        }
+                    });
                 }
             } else if (view === 'profile') {
                 document.getElementById('viewProfileBtn').classList.add('active');
