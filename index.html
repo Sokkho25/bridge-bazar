@@ -2384,8 +2384,11 @@
                 const response = await fetch(`/api/sellers/${encodeURIComponent(currentUser.username)}/products`);
                 if (!response.ok) throw new Error('Could not load seller products');
                 const data = await response.json();
+                const pendingProducts = products.filter((product) =>
+                    product._pendingProductSync && belongsToCurrentSeller(product)
+                );
                 const otherProducts = products.filter((product) => !belongsToCurrentSeller(product));
-                products = [...otherProducts, ...(Array.isArray(data.products) ? data.products : [])];
+                products = [...otherProducts, ...(Array.isArray(data.products) ? data.products : []), ...pendingProducts];
                 if (window.setBridgeLocalState) window.setBridgeLocalState('bridge_products', products);
                 return true;
             } catch (error) {
@@ -3666,6 +3669,7 @@
         // ===== PRODUCT IMAGE PREVIEW =====
         let tempImageFiles = [];
         let productImagesReady = Promise.resolve();
+        const pendingProductSyncs = new Set();
 
         function renderTempProductImages() {
             const container = document.getElementById('imagePreviewList');
@@ -3732,10 +3736,11 @@
         };
 
         // ===== SAVE PRODUCT =====
-        async function saveProductData(name, price, stock, images) {
+        function saveProductData(name, price, stock, images) {
             if (!name || isNaN(price) || isNaN(stock)) { alert(t('fill_all_fields')); return; }
             const isEditing = Boolean(editingProductId);
             const existing = isEditing ? products.find(p => p.id === editingProductId) : null;
+            const syncId = `product-${Date.now()}-${Math.random().toString(36).slice(2)}`;
             const productForDatabase = {
                 id: existing?.id,
                 name,
@@ -3748,30 +3753,21 @@
                 sellerName: currentUser?.fullName || existing?.sellerName || 'Seller',
                 sellerPhone: currentUser?.mobile || existing?.sellerPhone || 'N/A'
             };
-            let savedProduct;
-            try {
-                const response = await fetch('/api/products', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ mode: isEditing ? 'update' : 'create', product: productForDatabase })
-                });
-                const data = await response.json();
-                if (!response.ok) throw new Error(data.error || 'Product could not be saved to the database.');
-                savedProduct = data.product;
-            } catch (error) {
-                alert(error.message || 'Product could not be saved to MongoDB. Please try again.');
-                return;
-            }
+            const instantProduct = {
+                ...productForDatabase,
+                id: isEditing ? existing.id : nextProductId++,
+                _pendingProductSync: syncId
+            };
+            pendingProductSyncs.add(syncId);
 
             if (isEditing) {
                 const idx = products.findIndex(p => p.id === editingProductId);
                 if (idx !== -1) {
-                    products[idx] = savedProduct;
+                    products[idx] = instantProduct;
                 }
                 alert(t('product_updated'));
             } else {
-                products.push(savedProduct);
-                nextProductId = Math.max(nextProductId, Number(savedProduct.id) + 1);
+                products.push(instantProduct);
                 alert(t('product_added'));
             }
             if (window.setBridgeLocalState) window.setBridgeLocalState('bridge_products', products);
@@ -3779,31 +3775,38 @@
             closeProductModal();
             if (currentUser?.role === 'seller') showView('dashboard');
             renderProducts();
+
+            fetch('/api/products', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ mode: isEditing ? 'update' : 'create', product: productForDatabase })
+            })
+                .then(async (response) => {
+                    const data = await response.json();
+                    if (!response.ok) throw new Error(data.error || 'Product could not be saved to the database.');
+                    const index = products.findIndex((product) => product._pendingProductSync === syncId);
+                    if (index !== -1) products[index] = data.product;
+                    nextProductId = Math.max(nextProductId, Number(data.product.id) + 1);
+                    if (window.setBridgeLocalState) window.setBridgeLocalState('bridge_products', products);
+                })
+                .catch((error) => {
+                    console.error('Product database save failed:', error);
+                    alert(error.message || 'Product could not be saved to MongoDB.');
+                })
+                .finally(() => {
+                    pendingProductSyncs.delete(syncId);
+                    if (currentUser?.role === 'seller' && dashboardView.style.display !== 'none') showView('dashboard');
+                });
         }
 
         document.getElementById('productForm')?.addEventListener('submit', async (e) => {
             e.preventDefault();
-            const saveButton = e.submitter || e.target.querySelector('button[type="submit"]');
-            if (saveButton?.disabled) return;
-            if (saveButton) {
-                saveButton.disabled = true;
-                saveButton.dataset.label = saveButton.innerHTML;
-                saveButton.innerHTML = 'Saving product...';
-            }
             const name = document.getElementById('productName').value.trim();
             const price = parseFloat(document.getElementById('productPrice').value);
             const stock = parseInt(document.getElementById('productStock').value);
-            try {
-                await productImagesReady;
-                const images = [...tempImageFiles];
-                await saveProductData(name, price, stock, images);
-            } finally {
-                if (saveButton) {
-                    saveButton.disabled = false;
-                    saveButton.innerHTML = saveButton.dataset.label || saveButton.innerHTML;
-                    delete saveButton.dataset.label;
-                }
-            }
+            await productImagesReady;
+            const images = [...tempImageFiles];
+            saveProductData(name, price, stock, images);
         });
 
         function closeProductModal() {
@@ -3854,7 +3857,7 @@
                     const userOrders = orders.filter(o => o.buyerId === currentUser.username);
                     recBtn.onclick = () => userOrders.forEach(o => downloadReceipt(o));
                 }
-                if (currentUser?.role === 'seller') {
+                if (currentUser?.role === 'seller' && pendingProductSyncs.size === 0) {
                     refreshCurrentSellerProducts().then((refreshed) => {
                         if (!refreshed || dashboardView.style.display === 'none' || currentUser?.role !== 'seller') return;
                         dashboardView.innerHTML = renderSellerDashboard();
@@ -4252,10 +4255,25 @@
             const nativeRemoveItem = Storage.prototype.removeItem;
             let isFlushing = null;
 
+            // Product photos belong in MongoDB, not in the browser's small
+            // localStorage quota. Keep product details locally and hydrate the
+            // images from the database when the page opens.
+            function makeLocalValue(key, value) {
+                if (key !== 'bridge_products' || !Array.isArray(value)) return value;
+                return value.map((product) => {
+                    const imageUrls = Array.isArray(product.images)
+                        ? product.images.filter((image) => typeof image === 'string' && !image.startsWith('data:'))
+                        : [];
+                    const imageData = typeof product.imageData === 'string' && !product.imageData.startsWith('data:')
+                        ? product.imageData : null;
+                    return { ...product, images: imageUrls.length ? imageUrls : null, imageData };
+                });
+            }
+
             // Used after an API endpoint has already confirmed its own save.
             // This updates this device without sending the full catalogue again.
             window.setBridgeLocalState = function(key, value) {
-                nativeSetItem.call(localStorage, key, JSON.stringify(value));
+                nativeSetItem.call(localStorage, key, JSON.stringify(makeLocalValue(key, value)));
             };
 
             async function request(url, options) {
@@ -4333,6 +4351,13 @@
             function queueDatabaseSave(key, value) {
                 if (!databaseKeys.has(key)) return;
                 const pending = getPendingSaves();
+                // Seller products use /api/products. Do not place the whole
+                // catalogue and every image in localStorage while it waits.
+                if (key === 'bridge_products') {
+                    delete pending.values[key];
+                    storePendingSaves(pending);
+                    return;
+                }
                 pending.values[key] = makeDatabaseValue(key, value);
                 pending.deletes = pending.deletes.filter((item) => item !== key);
                 storePendingSaves(pending);
@@ -4355,11 +4380,16 @@
             // Start observing saves immediately. This prevents a Render cold
             // start from losing changes made while the page is connecting.
             Storage.prototype.setItem = function (key, value) {
-                nativeSetItem.call(this, key, value);
                 if (this === localStorage && databaseKeys.has(key)) {
-                    try { queueDatabaseSave(key, JSON.parse(value)); }
+                    try {
+                        const parsedValue = JSON.parse(value);
+                        nativeSetItem.call(this, key, JSON.stringify(makeLocalValue(key, parsedValue)));
+                        queueDatabaseSave(key, parsedValue);
+                    }
                     catch (error) { console.warn('Could not queue database save.', error); }
+                    return;
                 }
+                nativeSetItem.call(this, key, value);
             };
 
             Storage.prototype.removeItem = function (key) {
@@ -4369,6 +4399,17 @@
 
             async function initialiseDatabase() {
                 try {
+                    // Free space left by older full-size product snapshots.
+                    const savedProducts = localStorage.getItem('bridge_products');
+                    if (savedProducts) {
+                        try { window.setBridgeLocalState('bridge_products', JSON.parse(savedProducts)); }
+                        catch (error) { console.warn('Could not compact cached products.', error); }
+                    }
+                    const pendingAtStart = getPendingSaves();
+                    if (pendingAtStart.values.bridge_products) {
+                        delete pendingAtStart.values.bridge_products;
+                        storePendingSaves(pendingAtStart);
+                    }
                     await flushPendingSaves();
                     const response = await request('/api/state');
                     const databaseState = await response.json();
@@ -4380,6 +4421,11 @@
                         Object.entries(databaseState).forEach(([key, value]) => {
                             // Keep a change made on this device until its queued save succeeds.
                             if (Object.prototype.hasOwnProperty.call(pending.values, key)) return;
+                            if (key === 'bridge_products') {
+                                products = Array.isArray(value) ? value : [];
+                                window.setBridgeLocalState(key, products);
+                                return;
+                            }
                             if (JSON.stringify(value) !== localStorage.getItem(key)) importedDatabaseData = true;
                             nativeSetItem.call(localStorage, key, JSON.stringify(value));
                         });
@@ -4395,6 +4441,12 @@
                             }
                         }));
                         await flushPendingSaves();
+                        if (Array.isArray(databaseState.bridge_products)) {
+                            renderProducts();
+                            if (currentUser?.role === 'seller' && dashboardView.style.display !== 'none') {
+                                dashboardView.innerHTML = renderSellerDashboard();
+                            }
+                        }
                         if (!importedDatabaseData) return;
                         window.location.reload();
                         return;
