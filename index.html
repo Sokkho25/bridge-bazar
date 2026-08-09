@@ -3690,7 +3690,7 @@
                             compressed = canvas.toDataURL('image/jpeg', quality);
                             maxSide = Math.round(maxSide * 0.78);
                             quality = Math.max(0.5, quality - 0.08);
-                        } while (compressed.length > 500000 && maxSide >= 320);
+                        } while (compressed.length > 280000 && maxSide >= 320);
                         resolve(compressed);
                     };
                     image.src = event.target.result;
@@ -3758,7 +3758,8 @@
                 nextProductId = Math.max(nextProductId, Number(savedProduct.id) + 1);
                 alert(t('product_added'));
             }
-            saveProducts();
+            if (window.setBridgeLocalState) window.setBridgeLocalState('bridge_products', products);
+            else saveProducts();
             closeProductModal();
             if (currentUser?.role === 'seller') showView('dashboard');
             renderProducts();
@@ -3766,12 +3767,27 @@
 
         document.getElementById('productForm')?.addEventListener('submit', async (e) => {
             e.preventDefault();
+            const saveButton = e.submitter || e.target.querySelector('button[type="submit"]');
+            if (saveButton?.disabled) return;
+            if (saveButton) {
+                saveButton.disabled = true;
+                saveButton.dataset.label = saveButton.innerHTML;
+                saveButton.innerHTML = 'Saving product...';
+            }
             const name = document.getElementById('productName').value.trim();
             const price = parseFloat(document.getElementById('productPrice').value);
             const stock = parseInt(document.getElementById('productStock').value);
-            await productImagesReady;
-            const images = [...tempImageFiles];
-            await saveProductData(name, price, stock, images);
+            try {
+                await productImagesReady;
+                const images = [...tempImageFiles];
+                await saveProductData(name, price, stock, images);
+            } finally {
+                if (saveButton) {
+                    saveButton.disabled = false;
+                    saveButton.innerHTML = saveButton.dataset.label || saveButton.innerHTML;
+                    delete saveButton.dataset.label;
+                }
+            }
         });
 
         function closeProductModal() {
@@ -4200,6 +4216,12 @@
             const nativeRemoveItem = Storage.prototype.removeItem;
             let isFlushing = null;
 
+            // Used after an API endpoint has already confirmed its own save.
+            // This updates this device without sending the full catalogue again.
+            window.setBridgeLocalState = function(key, value) {
+                nativeSetItem.call(localStorage, key, JSON.stringify(value));
+            };
+
             async function request(url, options) {
                 const response = await fetch(url, options);
                 if (!response.ok) throw new Error('Database request failed');
@@ -4263,10 +4285,10 @@
                 return value.map((product) => {
                     const images = Array.isArray(product.images) ? product.images : [];
                     const safeImages = images.filter((image) =>
-                        typeof image === 'string' && (!image.startsWith('data:') || image.length <= 600000)
+                        typeof image === 'string' && (!image.startsWith('data:') || image.length <= 350000)
                     ).slice(0, 4);
                     const safeImageData = typeof product.imageData === 'string' &&
-                        (!product.imageData.startsWith('data:') || product.imageData.length <= 600000)
+                        (!product.imageData.startsWith('data:') || product.imageData.length <= 350000)
                         ? product.imageData : (safeImages[0] || null);
                     return { ...product, images: safeImages.length ? safeImages : null, imageData: safeImageData };
                 });

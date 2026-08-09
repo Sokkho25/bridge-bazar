@@ -93,6 +93,19 @@ async function saveState(key, value) {
   await mirrorStateToCollection(key, value);
 }
 
+// A product is saved individually by the seller endpoint. This avoids deleting
+// and re-inserting the full catalogue (and every image) for one small change.
+async function saveSingleProductState(products, product) {
+  await AppState.findOneAndUpdate(
+    { key: 'bridge_products' },
+    { value: products, updatedAt: new Date() },
+    { upsert: true, new: true, setDefaultsOnInsert: true }
+  );
+  const Product = collectionModels.bridge_products;
+  await Product.deleteMany({ id: product.id });
+  await Product.create(product);
+}
+
 // Browser actions can trigger two saves in quick succession. Run writes for
 // the same collection one after another so the readable Atlas collection is
 // always left with the same latest data as appstates.
@@ -326,10 +339,10 @@ app.post('/api/products', async (req, res, next) => {
 
     const imageList = Array.isArray(input.images) ? input.images : [];
     const images = imageList.filter((image) =>
-      typeof image === 'string' && (!image.startsWith('data:') || image.length <= 600000)
+      typeof image === 'string' && (!image.startsWith('data:') || image.length <= 350000)
     ).slice(0, 4);
     const imageData = typeof input.imageData === 'string' &&
-      (!input.imageData.startsWith('data:') || input.imageData.length <= 600000)
+      (!input.imageData.startsWith('data:') || input.imageData.length <= 350000)
       ? input.imageData : (images[0] || null);
 
     const state = await AppState.findOne({ key: 'bridge_products' }).lean();
@@ -357,7 +370,7 @@ app.post('/api/products', async (req, res, next) => {
     };
     if (existingIndex >= 0) products[existingIndex] = product;
     else products.push(product);
-    await queueStateSave('bridge_products', products);
+    await saveSingleProductState(products, product);
     res.status(existingIndex >= 0 ? 200 : 201).json({ product });
   } catch (error) { next(error); }
 });
