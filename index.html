@@ -3698,35 +3698,45 @@
         };
 
         // ===== SAVE PRODUCT =====
-        function saveProductData(name, price, stock, images) {
+        async function saveProductData(name, price, stock, images) {
             if (!name || isNaN(price) || isNaN(stock)) { alert(t('fill_all_fields')); return; }
-            if (editingProductId) {
+            const isEditing = Boolean(editingProductId);
+            const existing = isEditing ? products.find(p => p.id === editingProductId) : null;
+            const productForDatabase = {
+                id: existing?.id,
+                name,
+                price,
+                stock,
+                images: images.length > 0 ? images : existing?.images || [existing?.imageData].filter(Boolean),
+                imageData: images.length > 0 ? images[0] : existing?.imageData || null,
+                sellerId: currentUser?.sellerId || existing?.sellerId || 1,
+                sellerName: currentUser?.fullName || existing?.sellerName || 'Seller',
+                sellerPhone: currentUser?.mobile || existing?.sellerPhone || 'N/A'
+            };
+            let savedProduct;
+            try {
+                const response = await fetch('/api/products', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ mode: isEditing ? 'update' : 'create', product: productForDatabase })
+                });
+                const data = await response.json();
+                if (!response.ok) throw new Error(data.error || 'Product could not be saved to the database.');
+                savedProduct = data.product;
+            } catch (error) {
+                alert(error.message || 'Product could not be saved to MongoDB. Please try again.');
+                return;
+            }
+
+            if (isEditing) {
                 const idx = products.findIndex(p => p.id === editingProductId);
                 if (idx !== -1) {
-                    const existing = products[idx];
-                    products[idx] = {
-                        ...existing,
-                        name,
-                        price,
-                        stock,
-                        images: images.length > 0 ? images : existing.images || [existing.imageData].filter(Boolean),
-                        imageData: images.length > 0 ? images[0] : existing.imageData
-                    };
+                    products[idx] = savedProduct;
                 }
                 alert(t('product_updated'));
             } else {
-                const seller = users.find(u => u.sellerId === currentUser?.sellerId);
-                products.push({
-                    id: nextProductId++,
-                    name,
-                    price,
-                    stock,
-                    images: images.length > 0 ? images : null,
-                    imageData: images.length > 0 ? images[0] : null,
-                    sellerId: currentUser?.sellerId || 1,
-                    sellerName: currentUser?.fullName || 'Seller',
-                    sellerPhone: currentUser?.mobile || 'N/A'
-                });
+                products.push(savedProduct);
+                nextProductId = Math.max(nextProductId, Number(savedProduct.id) + 1);
                 alert(t('product_added'));
             }
             saveProducts();
@@ -3742,7 +3752,7 @@
             const stock = parseInt(document.getElementById('productStock').value);
             await productImagesReady;
             const images = [...tempImageFiles];
-            saveProductData(name, price, stock, images);
+            await saveProductData(name, price, stock, images);
         });
 
         function closeProductModal() {

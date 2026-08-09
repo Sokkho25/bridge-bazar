@@ -290,6 +290,56 @@ app.get('/api/receipts/:orderId.pdf', async (req, res, next) => {
   } catch (error) { next(error); }
 });
 
+// Product saves use a dedicated endpoint so the seller dashboard is updated
+// only after the product has been accepted by MongoDB.
+app.post('/api/products', async (req, res, next) => {
+  try {
+    const input = req.body?.product || {};
+    const mode = req.body?.mode === 'update' ? 'update' : 'create';
+    const name = String(input.name || '').trim();
+    const price = Number(input.price);
+    const stock = Number(input.stock);
+    if (!name || !Number.isFinite(price) || !Number.isFinite(stock)) {
+      return res.status(400).json({ error: 'Product name, price, and stock are required.' });
+    }
+
+    const imageList = Array.isArray(input.images) ? input.images : [];
+    const images = imageList.filter((image) =>
+      typeof image === 'string' && (!image.startsWith('data:') || image.length <= 800000)
+    ).slice(0, 4);
+    const imageData = typeof input.imageData === 'string' &&
+      (!input.imageData.startsWith('data:') || input.imageData.length <= 800000)
+      ? input.imageData : (images[0] || null);
+
+    const state = await AppState.findOne({ key: 'bridge_products' }).lean();
+    const products = Array.isArray(state?.value) ? state.value : [];
+    const requestedId = Number(input.id);
+    const existingIndex = mode === 'update'
+      ? products.findIndex((product) => Number(product.id) === requestedId) : -1;
+    if (mode === 'update' && existingIndex === -1) {
+      return res.status(404).json({ error: 'This product no longer exists.' });
+    }
+
+    const nextId = products.reduce((max, product) => Math.max(max, Number(product.id) || 0), 0) + 1;
+    const product = {
+      ...(existingIndex >= 0 ? products[existingIndex] : {}),
+      id: existingIndex >= 0 ? requestedId : nextId,
+      name,
+      price,
+      stock,
+      images: images.length ? images : null,
+      imageData,
+      sellerId: input.sellerId ?? (existingIndex >= 0 ? products[existingIndex].sellerId : null),
+      sellerName: String(input.sellerName || (existingIndex >= 0 ? products[existingIndex].sellerName : 'Seller')),
+      sellerPhone: String(input.sellerPhone || (existingIndex >= 0 ? products[existingIndex].sellerPhone : ''))
+    };
+    if (existingIndex >= 0) products[existingIndex] = product;
+    else products.push(product);
+    await queueStateSave('bridge_products', products);
+    res.status(existingIndex >= 0 ? 200 : 201).json({ product });
+  } catch (error) { next(error); }
+});
+
 // The existing page writes to these endpoints through the small adapter at the
 // bottom of index.html. Keeping this API generic lets the unchanged interface
 // persist every marketplace feature in MongoDB.
