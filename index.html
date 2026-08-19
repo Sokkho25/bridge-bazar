@@ -2084,6 +2084,9 @@
         // ===== DATA =====
         let products = JSON.parse(localStorage.getItem('bridge_products')) || [];
         let nextProductId = products.length ? Math.max(...products.map(p => p.id)) + 1 : 1;
+        // Prevent a late database response from putting a just-deleted product
+        // back into this page while its deletion request is still finishing.
+        const removedProductIds = new Set();
         let users = JSON.parse(localStorage.getItem('bridge_users')) || [];
         let currentUser = null;
         let cart = JSON.parse(localStorage.getItem('bridge_cart')) || [];
@@ -2374,8 +2377,8 @@
 
         function belongsToCurrentSeller(product) {
             if (!currentUser || currentUser.role !== 'seller') return false;
-            if (product.sellerUsername) return product.sellerUsername === currentUser.username;
-            return sameSellerId(product.sellerId, currentUser.sellerId || 1);
+            return product.sellerUsername === currentUser.username ||
+                sameSellerId(product.sellerId, currentUser.sellerId || 1);
         }
 
         async function refreshCurrentSellerProducts() {
@@ -2385,10 +2388,16 @@
                 if (!response.ok) throw new Error('Could not load seller products');
                 const data = await response.json();
                 const pendingProducts = products.filter((product) =>
-                    product._pendingProductSync && belongsToCurrentSeller(product)
+                    product._pendingProductSync && belongsToCurrentSeller(product) &&
+                    !removedProductIds.has(Number(product.id))
                 );
-                const otherProducts = products.filter((product) => !belongsToCurrentSeller(product));
-                products = [...otherProducts, ...(Array.isArray(data.products) ? data.products : []), ...pendingProducts];
+                const otherProducts = products.filter((product) =>
+                    !belongsToCurrentSeller(product) && !removedProductIds.has(Number(product.id))
+                );
+                const serverProducts = (Array.isArray(data.products) ? data.products : []).filter((product) =>
+                    !removedProductIds.has(Number(product.id))
+                );
+                products = [...otherProducts, ...serverProducts, ...pendingProducts];
                 if (window.setBridgeLocalState) window.setBridgeLocalState('bridge_products', products);
                 return true;
             } catch (error) {
@@ -2997,7 +3006,7 @@
             </div>`;
         }
 
-        window.saveFullProfile = function() {
+        window.saveFullProfile = async function() {
             const newUsername = document.getElementById('profileUsername').value.trim();
             const newFullName = document.getElementById('profileFullName').value.trim();
             const newMobile = document.getElementById('profileMobile').value.trim();
@@ -3018,42 +3027,47 @@
                     currentUser.username)) { alert(t('username_taken')); return; }
             if (newPassword && newPassword !== confirmPassword) { alert(t('password_mismatch')); return; }
             if (newPassword && newPassword.length < 4) { alert(t('password_too_short')); return; }
-            const oldUsername = currentUser.username;
-            currentUser.username = newUsername;
-            currentUser.fullName = newFullName;
-            currentUser.mobile = newMobile;
-            currentUser.email = newEmail;
-            currentUser.address = newAddress;
-            currentUser.nid = newNid;
-            if (newPassword) currentUser.password = newPassword;
-            // Save payment fields if seller
-            if (currentUser.role === 'seller') {
-                currentUser.bkash = newBkash;
-                currentUser.nagad = newNagad;
-                currentUser.rocket = newRocket;
-                currentUser.bankAccount = newBankAccount;
+            const oldUser = { ...currentUser };
+            try {
+                const response = await fetch(`/api/users/${encodeURIComponent(oldUser.username)}/profile`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        actor: { username: oldUser.username, password: oldUser.password },
+                        profile: {
+                            username: newUsername,
+                            fullName: newFullName,
+                            mobile: newMobile,
+                            email: newEmail,
+                            address: newAddress,
+                            nid: newNid,
+                            newPassword,
+                            bkash: newBkash,
+                            nagad: newNagad,
+                            rocket: newRocket,
+                            bankAccount: newBankAccount
+                        }
+                    })
+                });
+                const data = await response.json().catch(() => ({}));
+                if (!response.ok) throw new Error(data.error || 'Profile could not be saved.');
+
+                // The backend has accepted the change. Keep this device up to
+                // date without using the old full-page reload workaround.
+                currentUser = { ...data.user, password: newPassword || oldUser.password };
+                const idx = users.findIndex((user) => user.username === oldUser.username);
+                if (idx !== -1) users[idx] = { ...currentUser };
+                else users.push({ ...currentUser });
+                if (window.setBridgeLocalState) window.setBridgeLocalState('bridge_users', users);
+                else localStorage.setItem('bridge_users', JSON.stringify(users));
+                localStorage.setItem('bridge_current_user', JSON.stringify(currentUser));
+                document.getElementById('currentUser').innerText = currentUser.fullName;
+                alert(t('profile_updated'));
+                showView('profile');
+            } catch (error) {
+                console.error('Profile update failed:', error);
+                alert(error.message || 'Profile could not be updated. Please try again.');
             }
-            const idx = users.findIndex(u => u.username === oldUsername);
-            if (idx !== -1) {
-                users[idx] = { ...users[idx],
-                    username: newUsername,
-                    fullName: newFullName,
-                    mobile: newMobile,
-                    email: newEmail,
-                    address: newAddress,
-                    nid: newNid,
-                    bkash: currentUser.bkash || '',
-                    nagad: currentUser.nagad || '',
-                    rocket: currentUser.rocket || '',
-                    bankAccount: currentUser.bankAccount || ''
-                };
-                if (newPassword) users[idx].password = newPassword;
-                saveUsers();
-            }
-            localStorage.setItem('bridge_current_user', JSON.stringify(currentUser));
-            document.getElementById('currentUser').innerText = currentUser.fullName;
-            alert(t('profile_updated'));
-            showView('profile');
         };
 
         // ===== COMPLAINT SYSTEM =====
@@ -4027,7 +4041,7 @@
             }
         };
 
-        async function removeProductFromMarketplace(id, isAdminDelete) {
+        function removeProductFromMarketplace(id, isAdminDelete) {
             const product = products.find((item) => Number(item.id) === Number(id));
             if (!product || !currentUser) {
                 alert('Please sign in to delete a product.');
@@ -4046,8 +4060,21 @@
                 : 'Delete this product?';
             if (!confirm(question)) return;
 
-            try {
-                const response = await fetch(`/api/products/${encodeURIComponent(id)}`, {
+            // Remove it from this screen first. The database save continues in
+            // the background, so a Render/MongoDB delay never makes the seller
+            // wait or leaves a product visibly stuck after pressing Delete.
+            products = products.filter((item) => Number(item.id) !== Number(id));
+            removedProductIds.add(Number(id));
+            if (window.setBridgeLocalState) window.setBridgeLocalState('bridge_products', products);
+            else saveProducts();
+            renderProducts();
+            if (isAdminDelete) showView('admin');
+            else showView('dashboard');
+            alert(isAdminDelete
+                ? t('product_deleted') + ' ' + t('product_removed_by_admin')
+                : t('product_deleted'));
+
+            fetch(`/api/products/${encodeURIComponent(id)}`, {
                     method: 'DELETE',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
@@ -4056,25 +4083,22 @@
                             password: currentUser.password
                         }
                     })
-                });
-                const data = await response.json().catch(() => ({}));
-                if (!response.ok) throw new Error(data.error || 'Product could not be deleted from the database.');
-
-                products = products.filter((item) => Number(item.id) !== Number(id));
+                })
+                .then(async (response) => {
+                    const data = await response.json().catch(() => ({}));
+                    if (!response.ok) throw new Error(data.error || 'Product could not be deleted from the database.');
+                })
+                .catch((error) => {
+                console.error('Product database deletion failed:', error);
+                removedProductIds.delete(Number(id));
+                if (!products.some((item) => Number(item.id) === Number(id))) products.push(product);
                 if (window.setBridgeLocalState) window.setBridgeLocalState('bridge_products', products);
                 else saveProducts();
                 renderProducts();
-                if (isAdminDelete) {
-                    alert(t('product_deleted') + ' ' + t('product_removed_by_admin'));
-                    showView('admin');
-                } else {
-                    alert(t('product_deleted'));
-                    showView('dashboard');
-                }
-            } catch (error) {
-                console.error('Product database deletion failed:', error);
+                if (isAdminDelete) showView('admin');
+                else showView('dashboard');
                 alert(error.message || 'Product could not be deleted. Please try again.');
-            }
+                });
         }
 
         window.deleteProduct = function(id) {
@@ -4315,6 +4339,21 @@
                 nativeSetItem.call(localStorage, key, JSON.stringify(makeLocalValue(key, value)));
             };
 
+            // Keep the already-open page in sync with MongoDB without forcing
+            // a browser reload. Reloading first showed the compact local copy
+            // (which deliberately has no base64 photos), causing products and
+            // their pictures to appear late after a profile update.
+            function applyRuntimeCollection(key, value) {
+                const list = Array.isArray(value) ? value : [];
+                if (key === 'bridge_users') users = list;
+                else if (key === 'bridge_orders') orders = list;
+                else if (key === 'bridge_reviews') reviews = list;
+                else if (key === 'seller_ratings') sellerRatings = list;
+                else if (key === 'bridge_payouts') payouts = list;
+                else if (key === 'bridge_banned_users') bannedUsers = list;
+                else if (key === 'bridge_complaints') complaints = list;
+            }
+
             async function request(url, options) {
                 const response = await fetch(url, options);
                 if (!response.ok) throw new Error('Database request failed');
@@ -4454,18 +4493,21 @@
                     const databaseState = await response.json();
                     const hasDatabaseData = Object.keys(databaseState).length > 0;
                     const pending = getPendingSaves();
-                    let importedDatabaseData = false;
-
                     if (hasDatabaseData) {
                         Object.entries(databaseState).forEach(([key, value]) => {
                             // Keep a change made on this device until its queued save succeeds.
                             if (Object.prototype.hasOwnProperty.call(pending.values, key)) return;
                             if (key === 'bridge_products') {
-                                products = Array.isArray(value) ? value : [];
+                                products = (Array.isArray(value) ? value : []).filter((product) =>
+                                    !removedProductIds.has(Number(product.id))
+                                );
+                                nextProductId = products.reduce((max, product) =>
+                                    Math.max(max, Number(product.id) || 0), 0
+                                ) + 1;
                                 window.setBridgeLocalState(key, products);
                                 return;
                             }
-                            if (JSON.stringify(value) !== localStorage.getItem(key)) importedDatabaseData = true;
+                            applyRuntimeCollection(key, value);
                             nativeSetItem.call(localStorage, key, JSON.stringify(value));
                         });
                         await Promise.all([...databaseKeys].map(async (key) => {
@@ -4486,8 +4528,6 @@
                                 dashboardView.innerHTML = renderSellerDashboard();
                             }
                         }
-                        if (!importedDatabaseData) return;
-                        window.location.reload();
                         return;
                     }
 

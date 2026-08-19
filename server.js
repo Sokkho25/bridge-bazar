@@ -276,6 +276,81 @@ app.post('/api/auth/login', async (req, res, next) => {
   } catch (error) { next(error); }
 });
 
+// Save a profile directly instead of sending the whole users collection from
+// the browser. A sellerId is permanent, so products remain connected even if
+// the seller edits their username, name, phone number, or payment details.
+app.put('/api/users/:username/profile', async (req, res, next) => {
+  try {
+    const previousUsername = String(req.params.username || '').trim();
+    const actorUsername = String(req.body?.actor?.username || '').trim();
+    const actorPassword = String(req.body?.actor?.password || '');
+    const profile = req.body?.profile || {};
+    if (!previousUsername || previousUsername !== actorUsername || !actorPassword) {
+      return res.status(401).json({ error: 'Please sign in again before changing your profile.' });
+    }
+
+    const state = await AppState.findOne({ key: 'bridge_users' }).lean();
+    const users = Array.isArray(state?.value) ? state.value : [];
+    const userIndex = users.findIndex((user) =>
+      user.username === previousUsername && user.password === actorPassword && !user.isBanned
+    );
+    if (userIndex === -1) return res.status(401).json({ error: 'Your sign-in session has expired. Please sign in again.' });
+
+    const existingUser = users[userIndex];
+    const username = String(profile.username || '').trim();
+    const fullName = String(profile.fullName || '').trim();
+    const mobile = String(profile.mobile || '').trim();
+    const address = String(profile.address || '').trim();
+    const nid = String(profile.nid || '').trim();
+    const email = String(profile.email || '').trim();
+    const password = String(profile.newPassword || '');
+    if (!username || !fullName || !mobile || !address || !nid) {
+      return res.status(400).json({ error: 'Please complete all required profile fields.' });
+    }
+    if (users.some((user, index) => index !== userIndex && user.username === username)) {
+      return res.status(409).json({ error: 'This username is already in use.' });
+    }
+    if (users.some((user, index) => index !== userIndex && user.nid === nid)) {
+      return res.status(409).json({ error: 'This NID is already registered.' });
+    }
+    if (password && password.length < 4) {
+      return res.status(400).json({ error: 'Password must contain at least 4 characters.' });
+    }
+
+    const updatedUser = {
+      ...existingUser,
+      username,
+      fullName,
+      mobile,
+      email,
+      address,
+      nid,
+      password: password || existingUser.password
+    };
+    if (existingUser.role === 'seller') {
+      updatedUser.bkash = String(profile.bkash || '').trim();
+      updatedUser.nagad = String(profile.nagad || '').trim();
+      updatedUser.rocket = String(profile.rocket || '').trim();
+      updatedUser.bankAccount = String(profile.bankAccount || '').trim();
+    }
+
+    users[userIndex] = updatedUser;
+    await AppState.findOneAndUpdate(
+      { key: 'bridge_users' },
+      { value: users, updatedAt: new Date() },
+      { upsert: true, new: true, setDefaultsOnInsert: true }
+    );
+    await collectionModels.bridge_users.findOneAndReplace(
+      { username: previousUsername },
+      updatedUser,
+      { upsert: true, new: true }
+    );
+
+    const { password: _password, ...safeUser } = updatedUser;
+    res.json({ user: safeUser });
+  } catch (error) { next(error); }
+});
+
 app.get('/api/receipts/:orderId.pdf', async (req, res, next) => {
   try {
     const state = await AppState.findOne({ key: 'bridge_orders' }).lean();
@@ -414,9 +489,10 @@ app.delete('/api/products/:id', async (req, res, next) => {
     if (!product) return res.status(404).json({ error: 'This product no longer exists.' });
 
     const isAdmin = actor.role === 'admin';
-    const isOwner = product.sellerUsername
-      ? product.sellerUsername === actor.username
-      : String(product.sellerId ?? '') === String(actor.sellerId ?? '');
+    const isOwner = actor.role === 'seller' && (
+      product.sellerUsername === actor.username ||
+      String(product.sellerId ?? '') === String(actor.sellerId ?? '')
+    );
     if (!isAdmin && !isOwner) {
       return res.status(403).json({ error: 'Only the product owner or an administrator can delete this product.' });
     }
@@ -442,7 +518,7 @@ app.get('/api/sellers/:username/products', async (req, res, next) => {
     if (!seller) return res.status(404).json({ error: 'Seller account not found.' });
     const sellerProducts = products.filter((product) =>
       product.sellerUsername === seller.username ||
-      (!product.sellerUsername && String(product.sellerId ?? '') === String(seller.sellerId ?? ''))
+      String(product.sellerId ?? '') === String(seller.sellerId ?? '')
     );
     res.json({ products: sellerProducts });
   } catch (error) { next(error); }
