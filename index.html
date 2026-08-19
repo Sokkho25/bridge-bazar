@@ -3871,14 +3871,9 @@
                 document.getElementById('viewCartBtn').classList.add('active');
                 updateCartUI();
             } else if (view === 'dashboard') {
-                if (currentUser?.role === 'admin') {
-                    showView('admin');
-                    window.switchAdminTab('orders');
-                    return;
-                }
                 document.getElementById('viewDashboardBtn').classList.add('active');
                 if (currentUser?.role === 'seller') dashboardView.innerHTML = renderSellerDashboard();
-                else if (currentUser?.role === 'buyer') dashboardView.innerHTML = renderBuyerDashboard();
+                else if (currentUser?.role === 'buyer' || currentUser?.role === 'admin') dashboardView.innerHTML = renderBuyerDashboard();
                 dashboardView.style.display = 'block';
                 const addBtn = document.getElementById('addProductBtn');
                 if (addBtn) addBtn.onclick = () => { editingProductId = null;
