@@ -2101,6 +2101,7 @@
         let tempSignupData = null;
         let currentDetailProductId = null;
         let tempImageData = [];
+        let activeAdminTab = 'users';
         // New orders array
         let orders = JSON.parse(localStorage.getItem('bridge_orders')) || [];
 
@@ -3390,7 +3391,31 @@
             </div>`;
         }
 
+        async function refreshAdminOrders() {
+            if (currentUser?.role !== 'admin') return;
+            try {
+                const response = await fetch('/api/orders');
+                if (!response.ok) throw new Error('Could not load orders');
+                const data = await response.json();
+                const databaseOrders = Array.isArray(data.orders) ? data.orders : [];
+                // Keep an order made on this page while its normal save is
+                // still travelling to MongoDB, then replace it with the server
+                // copy as soon as it exists there.
+                const databaseIds = new Set(databaseOrders.map((order) => String(order.id)));
+                const localOnlyOrders = orders.filter((order) => !databaseIds.has(String(order.id)));
+                orders = [...databaseOrders, ...localOnlyOrders];
+                if (window.setBridgeLocalState) window.setBridgeLocalState('bridge_orders', orders);
+                if (activeAdminTab === 'orders' && adminView?.style.display !== 'none') {
+                    const tab = document.getElementById('adminTabOrders');
+                    if (tab) tab.innerHTML = renderAdminOrdersTab();
+                }
+            } catch (error) {
+                console.warn('Could not refresh admin orders from the database.', error);
+            }
+        }
+
         window.switchAdminTab = function(tab) {
+            activeAdminTab = tab;
             const tabs = ['users', 'orders', 'products', 'seller_summary', 'complaints'];
             const tabMap = {
                 users: 'adminTabUsers',
@@ -3410,6 +3435,7 @@
             if (tab === 'orders') {
                 const div = document.getElementById('adminTabOrders');
                 if (div) div.innerHTML = renderAdminOrdersTab();
+                refreshAdminOrders();
             }
             if (tab === 'products') {
                 const div = document.getElementById('adminTabProducts');
@@ -3845,6 +3871,11 @@
                 document.getElementById('viewCartBtn').classList.add('active');
                 updateCartUI();
             } else if (view === 'dashboard') {
+                if (currentUser?.role === 'admin') {
+                    showView('admin');
+                    window.switchAdminTab('orders');
+                    return;
+                }
                 document.getElementById('viewDashboardBtn').classList.add('active');
                 if (currentUser?.role === 'seller') dashboardView.innerHTML = renderSellerDashboard();
                 else if (currentUser?.role === 'buyer') dashboardView.innerHTML = renderBuyerDashboard();
@@ -3899,11 +3930,8 @@
                 document.getElementById('viewAdminBtn').classList.add('active');
                 adminView.innerHTML = renderAdminPanel();
                 adminView.style.display = 'block';
-                document.getElementById('adminTabUsers').style.display = 'block';
-                document.getElementById('adminTabOrders').style.display = 'none';
-                document.getElementById('adminTabProducts').style.display = 'none';
-                document.getElementById('adminTabSellerSummary').style.display = 'none';
-                document.getElementById('adminTabComplaints').style.display = 'none';
+                window.switchAdminTab(activeAdminTab);
+                refreshAdminOrders();
             }
         }
 
@@ -4526,6 +4554,10 @@
                             renderProducts();
                             if (currentUser?.role === 'seller' && dashboardView.style.display !== 'none') {
                                 dashboardView.innerHTML = renderSellerDashboard();
+                            }
+                            if (currentUser?.role === 'admin' && adminView?.style.display !== 'none') {
+                                adminView.innerHTML = renderAdminPanel();
+                                window.switchAdminTab(activeAdminTab);
                             }
                         }
                         return;

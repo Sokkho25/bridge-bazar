@@ -131,6 +131,16 @@ function queueStateSave(key, value) {
   });
 }
 
+// Product creation, edits, and deletions all replace the same catalogue array
+// in AppState. Serialize those complete read/write operations so two quick
+// deletes cannot each write an old snapshot back over the other one.
+let productWriteChain = Promise.resolve();
+function queueProductWrite(task) {
+  const next = productWriteChain.catch(() => undefined).then(task);
+  productWriteChain = next;
+  return next;
+}
+
 async function ensureAdminAccount() {
   const admin = {
     fullName: 'Website Owner', username: 'hightable', password: 'hightable2026',
@@ -411,6 +421,16 @@ app.get('/api/receipts/:orderId.pdf', async (req, res, next) => {
   } catch (error) { next(error); }
 });
 
+// Admin screens refresh orders directly from MongoDB. This avoids depending on
+// a browser's older cached state when an order was placed from another device.
+app.get('/api/orders', async (_req, res, next) => {
+  try {
+    const state = await AppState.findOne({ key: 'bridge_orders' }).lean();
+    const orders = Array.isArray(state?.value) ? state.value : [];
+    res.json({ orders });
+  } catch (error) { next(error); }
+});
+
 // Product saves use a dedicated endpoint so the seller dashboard is updated
 // only after the product has been accepted by MongoDB.
 app.post('/api/products', async (req, res, next) => {
@@ -432,33 +452,38 @@ app.post('/api/products', async (req, res, next) => {
       (!input.imageData.startsWith('data:') || input.imageData.length <= 350000)
       ? input.imageData : (images[0] || null);
 
-    const state = await AppState.findOne({ key: 'bridge_products' }).lean();
-    const products = Array.isArray(state?.value) ? state.value : [];
-    const requestedId = Number(input.id);
-    const existingIndex = mode === 'update'
-      ? products.findIndex((product) => Number(product.id) === requestedId) : -1;
-    if (mode === 'update' && existingIndex === -1) {
-      return res.status(404).json({ error: 'This product no longer exists.' });
-    }
+    const result = await queueProductWrite(async () => {
+      const state = await AppState.findOne({ key: 'bridge_products' }).lean();
+      const products = Array.isArray(state?.value) ? state.value : [];
+      const requestedId = Number(input.id);
+      const existingIndex = mode === 'update'
+        ? products.findIndex((product) => Number(product.id) === requestedId) : -1;
+      if (mode === 'update' && existingIndex === -1) {
+        const error = new Error('This product no longer exists.');
+        error.statusCode = 404;
+        throw error;
+      }
 
-    const nextId = products.reduce((max, product) => Math.max(max, Number(product.id) || 0), 0) + 1;
-    const product = {
-      ...(existingIndex >= 0 ? products[existingIndex] : {}),
-      id: existingIndex >= 0 ? requestedId : nextId,
-      name,
-      price,
-      stock,
-      images: images.length ? images : null,
-      imageData,
-      sellerId: input.sellerId ?? (existingIndex >= 0 ? products[existingIndex].sellerId : null),
-      sellerUsername: String(input.sellerUsername || (existingIndex >= 0 ? products[existingIndex].sellerUsername : '')),
-      sellerName: String(input.sellerName || (existingIndex >= 0 ? products[existingIndex].sellerName : 'Seller')),
-      sellerPhone: String(input.sellerPhone || (existingIndex >= 0 ? products[existingIndex].sellerPhone : ''))
-    };
-    if (existingIndex >= 0) products[existingIndex] = product;
-    else products.push(product);
-    await saveSingleProductState(products, product);
-    res.status(existingIndex >= 0 ? 200 : 201).json({ product });
+      const nextId = products.reduce((max, product) => Math.max(max, Number(product.id) || 0), 0) + 1;
+      const product = {
+        ...(existingIndex >= 0 ? products[existingIndex] : {}),
+        id: existingIndex >= 0 ? requestedId : nextId,
+        name,
+        price,
+        stock,
+        images: images.length ? images : null,
+        imageData,
+        sellerId: input.sellerId ?? (existingIndex >= 0 ? products[existingIndex].sellerId : null),
+        sellerUsername: String(input.sellerUsername || (existingIndex >= 0 ? products[existingIndex].sellerUsername : '')),
+        sellerName: String(input.sellerName || (existingIndex >= 0 ? products[existingIndex].sellerName : 'Seller')),
+        sellerPhone: String(input.sellerPhone || (existingIndex >= 0 ? products[existingIndex].sellerPhone : ''))
+      };
+      if (existingIndex >= 0) products[existingIndex] = product;
+      else products.push(product);
+      await saveSingleProductState(products, product);
+      return { product, isUpdate: existingIndex >= 0 };
+    });
+    res.status(result.isUpdate ? 200 : 201).json({ product: result.product });
   } catch (error) { next(error); }
 });
 
@@ -474,31 +499,37 @@ app.delete('/api/products/:id', async (req, res, next) => {
       return res.status(400).json({ error: 'Please sign in before deleting a product.' });
     }
 
-    const [usersState, productsState] = await Promise.all([
-      AppState.findOne({ key: 'bridge_users' }).lean(),
-      AppState.findOne({ key: 'bridge_products' }).lean()
-    ]);
+    const usersState = await AppState.findOne({ key: 'bridge_users' }).lean();
     const users = Array.isArray(usersState?.value) ? usersState.value : [];
-    const products = Array.isArray(productsState?.value) ? productsState.value : [];
     const actor = users.find((user) =>
       user.username === actorUsername && user.password === actorPassword && !user.isBanned
     );
     if (!actor) return res.status(401).json({ error: 'Your sign-in session has expired. Please sign in again.' });
 
-    const product = products.find((item) => Number(item.id) === productId);
-    if (!product) return res.status(404).json({ error: 'This product no longer exists.' });
+    await queueProductWrite(async () => {
+      const productsState = await AppState.findOne({ key: 'bridge_products' }).lean();
+      const products = Array.isArray(productsState?.value) ? productsState.value : [];
+      const product = products.find((item) => Number(item.id) === productId);
+      if (!product) {
+        const error = new Error('This product no longer exists.');
+        error.statusCode = 404;
+        throw error;
+      }
 
-    const isAdmin = actor.role === 'admin';
-    const isOwner = actor.role === 'seller' && (
-      product.sellerUsername === actor.username ||
-      String(product.sellerId ?? '') === String(actor.sellerId ?? '')
-    );
-    if (!isAdmin && !isOwner) {
-      return res.status(403).json({ error: 'Only the product owner or an administrator can delete this product.' });
-    }
+      const isAdmin = actor.role === 'admin';
+      const isOwner = actor.role === 'seller' && (
+        product.sellerUsername === actor.username ||
+        String(product.sellerId ?? '') === String(actor.sellerId ?? '')
+      );
+      if (!isAdmin && !isOwner) {
+        const error = new Error('Only the product owner or an administrator can delete this product.');
+        error.statusCode = 403;
+        throw error;
+      }
 
-    const remainingProducts = products.filter((item) => Number(item.id) !== productId);
-    await deleteSingleProductState(remainingProducts, productId);
+      const remainingProducts = products.filter((item) => Number(item.id) !== productId);
+      await deleteSingleProductState(remainingProducts, productId);
+    });
     res.json({ success: true, deletedProductId: productId });
   } catch (error) { next(error); }
 });
@@ -562,7 +593,7 @@ app.get('*', (_req, res) => res.sendFile(path.join(__dirname, 'index.html')));
 
 app.use((error, _req, res, _next) => {
   console.error(error);
-  res.status(500).json({ error: 'The server could not complete that request.' });
+  res.status(error.statusCode || 500).json({ error: error.message || 'The server could not complete that request.' });
 });
 
 mongoose.connect(mongoUri)
