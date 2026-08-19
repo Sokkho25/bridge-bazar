@@ -106,6 +106,18 @@ async function saveSingleProductState(products, product) {
   await Product.create(product);
 }
 
+// Product deletion needs its own database operation too. Product creation and
+// updates already use /api/products, so deleting only from a browser cache
+// would make the product reappear on another phone or laptop.
+async function deleteSingleProductState(products, productId) {
+  await AppState.findOneAndUpdate(
+    { key: 'bridge_products' },
+    { value: products, updatedAt: new Date() },
+    { upsert: true, new: true, setDefaultsOnInsert: true }
+  );
+  await collectionModels.bridge_products.deleteMany({ id: productId });
+}
+
 // Browser actions can trigger two saves in quick succession. Run writes for
 // the same collection one after another so the readable Atlas collection is
 // always left with the same latest data as appstates.
@@ -372,6 +384,46 @@ app.post('/api/products', async (req, res, next) => {
     else products.push(product);
     await saveSingleProductState(products, product);
     res.status(existingIndex >= 0 ? 200 : 201).json({ product });
+  } catch (error) { next(error); }
+});
+
+// Only the seller who posted a product or an administrator may remove it.
+// The account is checked again against MongoDB so the rule works on every
+// device instead of relying only on what the browser happens to display.
+app.delete('/api/products/:id', async (req, res, next) => {
+  try {
+    const productId = Number(req.params.id);
+    const actorUsername = String(req.body?.actor?.username || '').trim();
+    const actorPassword = String(req.body?.actor?.password || '');
+    if (!Number.isFinite(productId) || !actorUsername || !actorPassword) {
+      return res.status(400).json({ error: 'Please sign in before deleting a product.' });
+    }
+
+    const [usersState, productsState] = await Promise.all([
+      AppState.findOne({ key: 'bridge_users' }).lean(),
+      AppState.findOne({ key: 'bridge_products' }).lean()
+    ]);
+    const users = Array.isArray(usersState?.value) ? usersState.value : [];
+    const products = Array.isArray(productsState?.value) ? productsState.value : [];
+    const actor = users.find((user) =>
+      user.username === actorUsername && user.password === actorPassword && !user.isBanned
+    );
+    if (!actor) return res.status(401).json({ error: 'Your sign-in session has expired. Please sign in again.' });
+
+    const product = products.find((item) => Number(item.id) === productId);
+    if (!product) return res.status(404).json({ error: 'This product no longer exists.' });
+
+    const isAdmin = actor.role === 'admin';
+    const isOwner = product.sellerUsername
+      ? product.sellerUsername === actor.username
+      : String(product.sellerId ?? '') === String(actor.sellerId ?? '');
+    if (!isAdmin && !isOwner) {
+      return res.status(403).json({ error: 'Only the product owner or an administrator can delete this product.' });
+    }
+
+    const remainingProducts = products.filter((item) => Number(item.id) !== productId);
+    await deleteSingleProductState(remainingProducts, productId);
+    res.json({ success: true, deletedProductId: productId });
   } catch (error) { next(error); }
 });
 

@@ -3224,12 +3224,7 @@
         }
 
         window.adminDeleteProduct = function(id) {
-            if (confirm('Permanently delete this product from marketplace?')) {
-                products = products.filter(p => p.id !== id);
-                saveProducts();
-                alert(t('product_deleted') + ' ' + t('product_removed_by_admin'));
-                showView('admin');
-            }
+            removeProductFromMarketplace(id, true);
         };
 
         function renderAdminOrdersTab() {
@@ -4032,14 +4027,58 @@
             }
         };
 
-        window.deleteProduct = function(id) {
-            if (confirm('Delete this product?')) {
-                products = products.filter(p => p.id !== id);
-                saveProducts();
-                if (currentUser?.role === 'seller') showView('dashboard');
-                renderProducts();
-                alert(t('product_deleted'));
+        async function removeProductFromMarketplace(id, isAdminDelete) {
+            const product = products.find((item) => Number(item.id) === Number(id));
+            if (!product || !currentUser) {
+                alert('Please sign in to delete a product.');
+                return;
             }
+
+            const isAdmin = currentUser.role === 'admin';
+            const isOwner = belongsToCurrentSeller(product);
+            if (!isAdmin && !isOwner) {
+                alert('Only the seller who posted this product can delete it.');
+                return;
+            }
+
+            const question = isAdminDelete
+                ? 'Permanently delete this product from marketplace?'
+                : 'Delete this product?';
+            if (!confirm(question)) return;
+
+            try {
+                const response = await fetch(`/api/products/${encodeURIComponent(id)}`, {
+                    method: 'DELETE',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        actor: {
+                            username: currentUser.username,
+                            password: currentUser.password
+                        }
+                    })
+                });
+                const data = await response.json().catch(() => ({}));
+                if (!response.ok) throw new Error(data.error || 'Product could not be deleted from the database.');
+
+                products = products.filter((item) => Number(item.id) !== Number(id));
+                if (window.setBridgeLocalState) window.setBridgeLocalState('bridge_products', products);
+                else saveProducts();
+                renderProducts();
+                if (isAdminDelete) {
+                    alert(t('product_deleted') + ' ' + t('product_removed_by_admin'));
+                    showView('admin');
+                } else {
+                    alert(t('product_deleted'));
+                    showView('dashboard');
+                }
+            } catch (error) {
+                console.error('Product database deletion failed:', error);
+                alert(error.message || 'Product could not be deleted. Please try again.');
+            }
+        }
+
+        window.deleteProduct = function(id) {
+            removeProductFromMarketplace(id, false);
         };
 
         // ===== RATING SYSTEM =====
