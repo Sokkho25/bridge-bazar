@@ -221,7 +221,7 @@ app.post('/api/auth/otp/verify', async (req, res, next) => {
     }
     record.verifiedAt = new Date();
     await record.save();
-    res.status(204).end();
+    return res.status(200).json({ success: true, verified: true });
   } catch (error) { next(error); }
 });
 
