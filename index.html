@@ -1093,6 +1093,90 @@
         .payment-status.held { background: #fff3cd; color: #856404; }
         .payment-status.released { background: #d4edda; color: #155724; }
         .payment-status.fine { background: #f8d7da; color: #721c24; }
+
+        /* ===== MOTION LAYER (animated site) ===== */
+        .hero {
+            background: linear-gradient(120deg, #0b5e2e, #1b7a3d, #0f6b39, #2a8f4c, #0b5e2e);
+            background-size: 300% 300%;
+            animation: bbHeroGradient 18s ease infinite;
+        }
+        @keyframes bbHeroGradient { 0%,100% { background-position: 0% 50%; } 50% { background-position: 100% 50%; } }
+        .hero::before {
+            content: ""; position: absolute; inset: 0; z-index: 1; pointer-events: none;
+            background: radial-gradient(600px circle at var(--bb-mx, 50%) var(--bb-my, 40%), rgba(255,228,132,0.13), transparent 60%);
+            transition: background 0.2s;
+        }
+        .fresh-icon, .bubble { transition: translate 0.6s cubic-bezier(.2,.7,.2,1); }
+
+        #bbProgress {
+            position: fixed; top: 0; left: 0; height: 3px; width: 100%; z-index: 10000;
+            background: linear-gradient(90deg, #FFD966, #4ade80); transform-origin: 0 50%;
+            transform: scaleX(0); pointer-events: none;
+        }
+
+        /* hero entrance */
+        .bb-ready #landingContent .navbar { animation: bbDrop 0.8s cubic-bezier(.2,.7,.2,1) both; }
+        .bb-ready .left-text > * { animation: bbRiseIn 0.9s cubic-bezier(.2,.7,.2,1) both; }
+        .bb-ready .left-text > *:nth-child(1) { animation-delay: 0.15s; }
+        .bb-ready .left-text > *:nth-child(2) { animation-delay: 0.3s; }
+        .bb-ready .left-text > *:nth-child(3) { animation-delay: 0.45s; }
+        .bb-ready .left-text > *:nth-child(4) { animation-delay: 0.6s; }
+        .bb-ready .left-text > *:nth-child(5) { animation-delay: 0.75s; }
+        .bb-ready .stats-row { animation: bbRiseIn 0.9s 0.9s cubic-bezier(.2,.7,.2,1) both; }
+        @keyframes bbDrop { from { opacity: 0; transform: translateY(-30px); } to { opacity: 1; transform: none; } }
+        @keyframes bbRiseIn { from { opacity: 0; transform: translateY(36px); filter: blur(6px); } to { opacity: 1; transform: none; filter: none; } }
+
+        /* scroll reveal (class added by JS only, so content still shows without JS) */
+        .bb-hide { opacity: 0 !important; transform: translateY(44px) scale(0.97) !important; }
+        .bb-hide.bb-from-left { transform: translateX(-60px) !important; }
+        .bb-hide.bb-from-right { transform: translateX(60px) !important; }
+        .bb-hide.bb-zoom { transform: scale(0.85) !important; }
+        .bb-revealing { transition: opacity 0.8s cubic-bezier(.2,.7,.2,1), transform 0.8s cubic-bezier(.2,.7,.2,1) !important; }
+
+        /* section divider grows in */
+        .section-divider { transform-origin: center; transition: transform 1s cubic-bezier(.2,.7,.2,1) 0.2s; }
+        .bb-hide .section-divider { transform: scaleX(0); }
+
+        /* cursor spotlight on cards */
+        .step-card, .category-card, .testimonial-card, .feature-card, .stat-card, .product-card, .feature-item { position: relative; isolation: isolate; }
+        .bb-glow::after {
+            content: ""; position: absolute; inset: 0; border-radius: inherit; pointer-events: none; z-index: -1;
+            opacity: 0; transition: opacity 0.3s;
+            background: radial-gradient(260px circle at var(--bb-x, 50%) var(--bb-y, 50%), rgba(255,217,102,0.28), transparent 65%);
+        }
+        .bb-glow:hover::after { opacity: 1; }
+        .step-card:hover .step-icon, .category-card:hover i { display: inline-block; animation: bbWiggle 0.6s ease; }
+        @keyframes bbWiggle { 0%,100% { transform: rotate(0); } 25% { transform: rotate(-12deg) scale(1.15); } 75% { transform: rotate(10deg) scale(1.1); } }
+
+        /* buttons: shine sweep + ripple */
+        .btn, .view-btn, .submit-btn { position: relative; overflow: hidden; }
+        .btn::before, .submit-btn::before {
+            content: ""; position: absolute; top: 0; left: -120%; width: 60%; height: 100%; pointer-events: none;
+            background: linear-gradient(110deg, transparent, rgba(255,255,255,0.45), transparent);
+            transition: left 0.6s ease;
+        }
+        .btn:hover::before, .submit-btn:hover::before { left: 140%; }
+        .bb-ripple {
+            position: absolute; border-radius: 50%; pointer-events: none; transform: scale(0);
+            background: rgba(255,255,255,0.45); animation: bbRipple 0.6s ease-out forwards;
+        }
+        @keyframes bbRipple { to { transform: scale(4); opacity: 0; } }
+        .view-btn { transition: transform 0.25s, background 0.25s, color 0.25s, box-shadow 0.25s; }
+        .view-btn:hover { transform: translateY(-2px); }
+        .view-btn.active { box-shadow: 0 6px 18px rgba(0,0,0,0.18); }
+
+        /* dashboard views fade/slide in when switched */
+        .bb-view-in { animation: bbViewIn 0.5s cubic-bezier(.2,.7,.2,1); }
+        @keyframes bbViewIn { from { opacity: 0; transform: translateY(18px); } to { opacity: 1; transform: none; } }
+
+        /* modals pop */
+        .bb-modal-in > * { animation: bbPop 0.35s cubic-bezier(.2,.9,.3,1.2); }
+        @keyframes bbPop { from { opacity: 0; transform: scale(0.9) translateY(20px); } to { opacity: 1; transform: none; } }
+
+        @media (prefers-reduced-motion: reduce) {
+            *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
+            .bb-hide { opacity: 1 !important; transform: none !important; }
+        }
     </style>
     <base target="_blank">
 </head>
@@ -4578,6 +4662,143 @@
 
             initialiseDatabase();
         }());
+    </script>
+    <script>
+    /* ===== MOTION LAYER (animated site) ===== */
+    (function () {
+        const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+        const fine = window.matchMedia('(pointer: fine)').matches;
+        document.body.classList.add('bb-ready');
+
+        // scroll progress bar
+        const bar = document.createElement('div');
+        bar.id = 'bbProgress';
+        document.body.appendChild(bar);
+        let ticking = false;
+        window.addEventListener('scroll', () => {
+            if (ticking) return;
+            ticking = true;
+            requestAnimationFrame(() => {
+                const max = document.documentElement.scrollHeight - innerHeight;
+                bar.style.transform = 'scaleX(' + (max > 0 ? scrollY / max : 0) + ')';
+                ticking = false;
+            });
+        }, { passive: true });
+
+        // hero spotlight + parallax of floating fruit and bubbles
+        const hero = document.querySelector('.hero');
+        if (hero && fine && !reduce) {
+            const floaters = hero.querySelectorAll('.fresh-icon, .bubble');
+            hero.addEventListener('mousemove', e => {
+                const r = hero.getBoundingClientRect();
+                const px = (e.clientX - r.left) / r.width, py = (e.clientY - r.top) / r.height;
+                hero.style.setProperty('--bb-mx', (px * 100) + '%');
+                hero.style.setProperty('--bb-my', (py * 100) + '%');
+                floaters.forEach((el, i) => {
+                    const depth = ((i % 4) + 1) * 8;
+                    el.style.translate = ((0.5 - px) * depth) + 'px ' + ((0.5 - py) * depth) + 'px';
+                });
+            });
+        }
+
+        // count-up numbers
+        function countUp(el) {
+            const node = [...el.childNodes].reverse().find(n => n.nodeType === 3 && /\d/.test(n.textContent));
+            if (!node) return;
+            const m = node.textContent.match(/^(\D*)([\d,]+(?:\.\d+)?)(.*)$/s);
+            if (!m) return;
+            const target = parseFloat(m[2].replace(/,/g, ''));
+            const decimals = (m[2].split('.')[1] || '').length;
+            const commas = m[2].includes(',');
+            const t0 = performance.now(), dur = 1600;
+            (function step(now) {
+                const p = Math.min(1, (now - t0) / dur), e = 1 - Math.pow(1 - p, 3);
+                let v = (target * e).toFixed(decimals);
+                if (commas) v = Number(v).toLocaleString('en-US', { minimumFractionDigits: decimals });
+                node.textContent = m[1] + v + m[3];
+                if (p < 1) requestAnimationFrame(step);
+            })(t0);
+        }
+
+        // scroll reveal
+        const revealSel = '.section-header, .step-card, .courier-banner, .feature-item, .review-stats .stat-item, .testimonial-card, .category-card, .trust-section, .reviews-section, .stat-card, .product-card, .info-container > *';
+        const io = new IntersectionObserver(entries => {
+            entries.forEach(en => {
+                if (!en.isIntersecting) return;
+                const el = en.target;
+                io.unobserve(el);
+                el.classList.add('bb-revealing');
+                requestAnimationFrame(() => el.classList.remove('bb-hide'));
+                setTimeout(() => { el.classList.remove('bb-revealing'); el.style.transitionDelay = ''; }, 1400);
+                el.querySelectorAll('.num, .stat-number').forEach(countUp);
+                if (el.matches('.num, .stat-number')) countUp(el);
+            });
+        }, { threshold: 0.12, rootMargin: '0px 0px -40px 0px' });
+
+        function prepare(root) {
+            if (reduce) return;
+            const els = [];
+            if (root.matches && root.matches(revealSel)) els.push(root);
+            root.querySelectorAll && els.push(...root.querySelectorAll(revealSel));
+            const groups = new Map();
+            els.forEach(el => {
+                if (el.dataset.bbSeen) return;
+                el.dataset.bbSeen = '1';
+                const parent = el.parentElement;
+                const idx = groups.get(parent) || 0;
+                groups.set(parent, idx + 1);
+                el.style.transitionDelay = Math.min(idx, 8) * 90 + 'ms';
+                if (el.matches('.category-card, .stat-card')) el.classList.add('bb-zoom');
+                else if (el.matches('.feature-item, .testimonial-card')) el.classList.add(idx % 2 ? 'bb-from-right' : 'bb-from-left');
+                el.classList.add('bb-hide');
+                io.observe(el);
+            });
+            // glow cards
+            const glowSel = '.step-card, .category-card, .testimonial-card, .feature-card, .stat-card, .product-card, .feature-item';
+            const cards = [];
+            if (root.matches && root.matches(glowSel)) cards.push(root);
+            root.querySelectorAll && cards.push(...root.querySelectorAll(glowSel));
+            cards.forEach(c => c.classList.add('bb-glow'));
+        }
+        prepare(document.body);
+        document.querySelectorAll('.stats-row .stat-number').forEach(el => setTimeout(() => countUp(el), reduce ? 0 : 900));
+
+        if (fine) document.addEventListener('mousemove', e => {
+            const c = e.target.closest && e.target.closest('.bb-glow');
+            if (!c) return;
+            const r = c.getBoundingClientRect();
+            c.style.setProperty('--bb-x', (e.clientX - r.left) + 'px');
+            c.style.setProperty('--bb-y', (e.clientY - r.top) + 'px');
+        }, { passive: true });
+
+        // ripple on buttons
+        document.addEventListener('click', e => {
+            const b = e.target.closest && e.target.closest('.btn, .view-btn, .submit-btn');
+            if (!b || reduce) return;
+            const r = b.getBoundingClientRect(), s = Math.max(r.width, r.height);
+            const span = document.createElement('span');
+            span.className = 'bb-ripple';
+            span.style.cssText = 'width:' + s + 'px;height:' + s + 'px;left:' + (e.clientX - r.left - s / 2) + 'px;top:' + (e.clientY - r.top - s / 2) + 'px';
+            b.appendChild(span);
+            setTimeout(() => span.remove(), 650);
+        });
+
+        // animate new content (products rendered later) and view/modal switches
+        const viewIds = ['productsView', 'cartView', 'dashboardView', 'profileView', 'complaintView', 'adminView', 'dashboardContent'];
+        new MutationObserver(muts => {
+            muts.forEach(m => {
+                if (m.type === 'childList') m.addedNodes.forEach(n => n.nodeType === 1 && prepare(n));
+                else if (m.type === 'attributes' && m.attributeName === 'style') {
+                    const el = m.target, shown = el.style.display && el.style.display !== 'none';
+                    const was = m.oldValue && /display:\s*none/.test(m.oldValue);
+                    if (!shown || !was || reduce) return;
+                    const cls = viewIds.includes(el.id) ? 'bb-view-in' : (el.classList.contains('modal') || /Modal$/.test(el.id) ? 'bb-modal-in' : '');
+                    if (!cls) return;
+                    el.classList.remove(cls); void el.offsetWidth; el.classList.add(cls);
+                }
+            });
+        }).observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['style'], attributeOldValue: true });
+    })();
     </script>
 </body>
 </html>
