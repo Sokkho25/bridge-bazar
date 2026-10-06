@@ -1879,7 +1879,7 @@
                 price_per_unit: "Price per unit", total_amount: "Total Amount",
                 payment_method_receipt: "Payment Method", thank_you: "Thank you for shopping at Bridge Bazar!",
                 payout_24h: "Money will be sent to seller within 24 hours.",
-                submit_complaint: "Submit Complaint", subject: "Subject", description: "Description",
+                submit_complaint: "Submit Complaint", subject: "Subject", complaint_description: "Description",
                 attach_image: "Attach Image", send: "Send", reply: "Reply", admin_reply: "Admin Reply",
                 resolve: "Resolve", resolved: "Resolved", pending: "Pending",
                 fresh_produce: "Fresh Produce", secure_escrow: "Secure Escrow",
@@ -2027,7 +2027,7 @@
                 total_amount: "মোট পরিমাণ", payment_method_receipt: "পেমেন্ট পদ্ধতি",
                 thank_you: "Bridge Bazar-এ কেনাকাটার জন্য ধন্যবাদ!",
                 payout_24h: "২৪ ঘন্টার মধ্যে বিক্রেতাকে টাকা পাঠানো হবে।",
-                submit_complaint: "অভিযোগ দিন", subject: "বিষয়", description: "বিবরণ",
+                submit_complaint: "অভিযোগ দিন", subject: "বিষয়", complaint_description: "বিবরণ",
                 attach_image: "ছবি যুক্ত করুন", send: "পাঠান", reply: "জবাব দিন",
                 admin_reply: "অ্যাডমিনের জবাব", resolve: "সমাধান করুন", resolved: "সমাধানকৃত", pending: "অপেক্ষমাণ",
                 fresh_produce: "সতেজ পণ্য", secure_escrow: "নিরাপদ এসক্রো", fast_delivery: "দ্রুত ডেলিভারি",
@@ -3161,7 +3161,7 @@
                 <div class="section-title">${t('complaints')}</div>
                 <form id="complaintForm" style="margin-bottom:2rem;">
                     <div class="form-group"><label>${t('subject')}</label><input type="text" id="complaintSubject" placeholder="Enter subject" required></div>
-                    <div class="form-group"><label>${t('description')}</label><textarea id="complaintDescription" rows="3" placeholder="Describe your complaint" required></textarea></div>
+                    <div class="form-group"><label>${t('complaint_description')}</label><textarea id="complaintDescription" rows="3" placeholder="Describe your complaint" required></textarea></div>
                     <div class="form-group"><label>${t('attach_image')}</label><input type="file" id="complaintImage" accept="image/*" onchange="previewComplaintImage(this)"></div>
                     <div id="imagePreviewContainer"><img id="complaintImagePreview" style="max-width:150px; display:none; border-radius:8px;"></div>
                     <button type="submit" class="submit-btn" style="background:#27ae60;">${t('send')}</button>
